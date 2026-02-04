@@ -17,6 +17,8 @@ function onOpen() {
     .createMenu('KNA Email Sender')
     .addItem('Import from Drive', 'importFromDrive')
     .addItem('Create / Open Import Folder', 'createOrOpenImportFolder')
+    .addSeparator()
+    .addItem('Sync Dashboard to Log', 'syncDashboardToLog')
     .addToUi();
 }
 
@@ -89,7 +91,7 @@ function findLatestCsvBySubject(folder, subject) {
 }
 
 /**
- * Imports a Drive CSV file into a sheet: clears the sheet and writes all rows.
+ * Imports a Drive CSV file into a sheet. Wipes any existing data and replaces with the CSV.
  * @param {GoogleAppsScript.Drive.File} csvFile
  * @param {string} sheetName - "Math Data" or "Reading Data"
  */
@@ -103,6 +105,7 @@ function importCsvToSheet(csvFile, sheetName) {
   const csvText = csvBlob.getDataAsString();
   const rows = Utilities.parseCsv(csvText);
   if (rows.length === 0) return;
+  // Wipe entire sheet (content + formatting) and replace with imported data
   sheet.clear();
   sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
   sheet.autoResizeColumns(1, rows[0].length);
@@ -160,4 +163,153 @@ function importFromDrive() {
   }
 
   ui.alert('Import from Drive', messages.join('\n'), ui.ButtonSet.OK);
+}
+
+// --- Dashboard → Log sync (button entry point) ---
+
+/** Expected dashboard headers (row 1). Status values: Not Sent, Issue, Sent. */
+const DASHBOARD_HEADERS = ['LoginID', 'Name', 'Trigger #', 'Email', 'Status', 'Notes'];
+
+/**
+ * Syncs the current dashboard to the Log sheet. Tie this function to your button.
+ * Runs on whichever sheet is active (must be "Math Dashboard" or "Reading Dashboard").
+ * - Ignores "Not Sent".
+ * - "Issue": appends Subject, LoginID, Name, Trigger #, Note to Log columns I–M (Subject in I).
+ * - "Sent": appends LoginID, Name, Trigger # to Log columns A–C (Math) or E–G (Reading).
+ */
+function syncDashboardToLog() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  const name = sheet.getName();
+
+  const isMath = name.toLowerCase().indexOf('math') !== -1;
+  const isReading = name.toLowerCase().indexOf('reading') !== -1;
+  const isDashboard = name.toLowerCase().indexOf('dashboard') !== -1;
+
+  if (!isDashboard || (!isMath && !isReading)) {
+    SpreadsheetApp.getUi().alert(
+      'Wrong sheet',
+      'Please run this from "Math Dashboard" or "Reading Dashboard".',
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    return;
+  }
+
+  const subject = isMath ? 'Math' : 'Reading';
+  let logSheet = ss.getSheetByName('Log');
+  if (!logSheet) {
+    logSheet = ss.insertSheet('Log');
+    // Optional: set headers for Log (A–C Math Sent, E–G Reading Sent, I–M Issue)
+    logSheet.getRange(1, 1, 1, 3).setValues([['Math LoginID', 'Math Name', 'Math Trigger #']]);
+    logSheet.getRange(1, 5, 1, 7).setValues([['Reading LoginID', 'Reading Name', 'Reading Trigger #']]);
+    logSheet.getRange(1, 9, 1, 13).setValues([['Subject', 'LoginID', 'Name', 'Trigger #', 'Note']]);
+  }
+
+  const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const col = getColumnIndices(headerRow);
+
+  if (!col.loginId || !col.status) {
+    SpreadsheetApp.getUi().alert(
+      'Missing headers',
+      'Dashboard must have headers: LoginID, Name, Trigger #, Email, Status, Notes (in row 1).',
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const issueRows = [];
+  const sentMathRows = [];
+  const sentReadingRows = [];
+
+  const dataRange = sheet.getRange(2, 1, lastRow, sheet.getLastColumn());
+  const rows = dataRange.getValues();
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const status = String((row[col.status - 1] || '')).trim();
+
+    if (status === '' || status.toLowerCase() === 'not sent') continue;
+
+    const loginId = row[col.loginId - 1];
+    const studentName = row[col.name - 1];
+    const triggerNum = row[col.triggerNum - 1];
+    const note = (col.notes && row[col.notes - 1] != null) ? row[col.notes - 1] : '';
+
+    if (status.toLowerCase() === 'issue') {
+      issueRows.push([subject, loginId, studentName, triggerNum, note]);
+    } else if (status.toLowerCase() === 'sent') {
+      if (isMath) {
+        sentMathRows.push([loginId, studentName, triggerNum]);
+      } else {
+        sentReadingRows.push([loginId, studentName, triggerNum]);
+      }
+    }
+  }
+
+  // Append to Log
+  if (sentMathRows.length > 0) {
+    const nextRow = getNextLogRow(logSheet, 1) + 1;
+    logSheet.getRange(nextRow, 1, nextRow + sentMathRows.length - 1, 3).setValues(sentMathRows);
+  }
+  if (sentReadingRows.length > 0) {
+    const nextRow = getNextLogRow(logSheet, 5) + 1;
+    logSheet.getRange(nextRow, 5, nextRow + sentReadingRows.length - 1, 7).setValues(sentReadingRows);
+  }
+  if (issueRows.length > 0) {
+    const nextRow = getNextLogRow(logSheet, 9) + 1;
+    logSheet.getRange(nextRow, 9, nextRow + issueRows.length - 1, 13).setValues(issueRows);
+    // Differentiate by subject in column G (same row range)
+    const subjectCol = issueRows.map(function (r) { return [r[0]]; }); // Subject is first in row
+    logSheet.getRange(nextRow, 7, nextRow + issueRows.length - 1, 7).setValues(subjectCol);
+  }
+
+  const msg = [
+    subject + ' Dashboard → Log',
+    'Sent: ' + (isMath ? sentMathRows.length : sentReadingRows.length),
+    'Issues: ' + issueRows.length
+  ].join('\n');
+  SpreadsheetApp.getUi().alert('Sync complete', msg, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+/**
+ * Finds 1-based column indices for LoginID, Name, Trigger #, Email, Status, Notes.
+ * @param {any[]} headerRow - Row 1 values
+ * @returns {{ loginId: number, name: number, triggerNum: number, email: number, status: number, notes: number }}
+ */
+function getColumnIndices(headerRow) {
+  const out = { loginId: 0, name: 0, triggerNum: 0, email: 0, status: 0, notes: 0 };
+  for (let c = 0; c < headerRow.length; c++) {
+    const h = String(headerRow[c] || '').trim().toLowerCase();
+    if (h === 'loginid') out.loginId = c + 1;
+    else if (h === 'name') out.name = c + 1;
+    else if (h === 'trigger #' || h.indexOf('trigger') !== -1) out.triggerNum = c + 1;
+    else if (h === 'email') out.email = c + 1;
+    else if (h === 'status') out.status = c + 1;
+    else if (h === 'notes') out.notes = c + 1;
+  }
+  if (!out.triggerNum) {
+    for (let c = 0; c < headerRow.length; c++) {
+      if (String(headerRow[c]).indexOf('Trigger') !== -1) { out.triggerNum = c + 1; break; }
+    }
+  }
+  return out;
+}
+
+/**
+ * Returns the last row with data in the given column (1-based). 0 if column is empty.
+ */
+function getNextLogRow(logSheet, colA1) {
+  const col = logSheet.getRange(1, colA1, logSheet.getMaxRows(), colA1);
+  const vals = col.getValues();
+  let last = 0;
+  for (let r = vals.length - 1; r >= 0; r--) {
+    if (vals[r][0] !== null && String(vals[r][0]).trim() !== '') {
+      last = r + 1;
+      break;
+    }
+  }
+  return last;
 }
