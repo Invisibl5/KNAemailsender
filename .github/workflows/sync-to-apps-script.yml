@@ -1,0 +1,31 @@
+# Auto-push this repo to Google Apps Script when you push to main.
+# One-time setup: see README "Auto-update (GitHub Actions)" section.
+
+name: Sync to Google Apps Script
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  push-to-apps-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install clasp
+        run: npm install -g @google/clasp
+
+      - name: Authenticate clasp
+        run: echo "$CLASPRC_JSON" > ~/.clasprc.json
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+
+      - name: Push to Apps Script
+        run: clasp push
