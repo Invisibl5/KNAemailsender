@@ -5,6 +5,9 @@
  * are imported to "Math Data" and "Reading Data" tabs, then archived.
  */
 
+// --- Version (bump when you deploy changes) ---
+const VERSION = '1.0';
+
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
 const ARCHIVE_FOLDER_NAME = 'Archive';
@@ -14,7 +17,7 @@ const ARCHIVE_FOLDER_NAME = 'Archive';
  */
 function onOpen() {
   SpreadsheetApp.getUi()
-    .createMenu('KNA Email Sender')
+    .createMenu('KNA Email Sender (v' + VERSION + ')')
     .addItem('Import from Drive', 'importFromDrive')
     .addItem('Create / Open Import Folder', 'createOrOpenImportFolder')
     .addSeparator()
