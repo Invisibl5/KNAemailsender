@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.6';
+const VERSION = '1.0.7';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -169,18 +169,11 @@ function importFromDrive() {
 }
 
 // --- Dashboard → Log sync (button entry point) ---
-// Log: A–C = Math Sent (LoginID,Name,Trigger #), E–G = Reading Sent (LoginID,Name,Trigger #), I–N = Issue (Subject,LoginID,Name,Trigger #,Note,Date)
+// Log: A–C = Math Sent, E–G = Reading Sent, I–N = Issue (Subject,LoginID,Name,Trigger #,Note,Date)
 //
-// FILTER FORMULAS — use the LoginID from the SAME BLOCK you're filtering (I–N block uses column I, not A).
-//
-// Math Dashboard I–N (Issue block: LoginID in I, Status in M). Exclude rows logged today as Math:
-//   =FILTER('Math Dashboard'!I:N, 'Math Dashboard'!M:M="Issue", COUNTIFS(Log!J:J, 'Math Dashboard'!I:I, Log!N:N, TODAY(), Log!I:I, "Math")=0)
-//
-// Reading Dashboard I–N (Issue block):
-//   =FILTER('Reading Dashboard'!I:N, 'Reading Dashboard'!M:M="Issue", COUNTIFS(Log!J:J, 'Reading Dashboard'!I:I, Log!N:N, TODAY(), Log!I:I, "Reading")=0)
-//
-// First block (A:C, E=F) if you filter by Action "SEND EMAIL" — use column A for that block:
-//   =FILTER('Math Dashboard'!A:C, 'Math Dashboard'!E:E="SEND EMAIL", COUNTIFS(Log!J:J, 'Math Dashboard'!A:A, Log!N:N, TODAY(), Log!I:I, "Math")=0)
+// I–L = data to see, M–N = where you enter Status and Notes. No FILTER formula in I–L (that would be circular).
+// After you hit Log: we add the row to the Log and clear Status (M) and Notes (N) on the dashboard so the row disappears.
+// Use Data > Create a filter on the I–N range, then filter column M (Status) to "Issue". You’ll only see Issue rows; when you log one, it’s cleared and drops off the list.
 
 /** Expected dashboard headers (row 1). Status values: Not Sent, Issue, Sent. */
 const DASHBOARD_HEADERS = ['LoginID', 'Name', 'Trigger #', 'Email', 'Status', 'Notes'];
@@ -245,6 +238,7 @@ function syncDashboardToLog() {
   if (lastRow < 2) return;
 
   const issueRows = [];
+  const issueSheetRows = []; // 1-based sheet row numbers for rows we log as Issue (so we can clear M,N after)
   const sentMathRows = [];
   const sentReadingRows = [];
 
@@ -264,6 +258,7 @@ function syncDashboardToLog() {
 
     if (status.toLowerCase() === 'issue') {
       issueRows.push([subject, loginId, studentName, triggerNum, note]);
+      issueSheetRows.push(2 + i); // 1-based sheet row (data starts row 2)
     } else if (status.toLowerCase() === 'sent') {
       if (isMath) {
         sentMathRows.push([loginId, studentName, triggerNum]);
@@ -296,6 +291,12 @@ function syncDashboardToLog() {
       dateCol.push([today]);
     }
     logSheet.getRange(nextRow, 14, dateCol.length, 1).setValues(dateCol);
+    // Clear Status and Notes on the dashboard for the rows we just logged so they "move" off the list
+    for (let r = 0; r < issueSheetRows.length; r++) {
+      const sheetRow = issueSheetRows[r];
+      sheet.getRange(sheetRow, col.status).clearContent();
+      if (col.notes) sheet.getRange(sheetRow, col.notes).clearContent();
+    }
   }
 
   const msg = [
