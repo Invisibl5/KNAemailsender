@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.9';
+const VERSION = '1.0.10';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -282,8 +282,12 @@ function syncDashboardToLog() {
     const numRows = issueRows.length;
     // Issue: I–N = Subject,LoginID,Name,Trigger #,Note,Date (do not write to G; G is for Reading Sent Trigger # only)
     logSheet.getRange(nextRow, 9, numRows, 5).setValues(issueRows);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Use spreadsheet's TODAY() so the date matches the sheet timezone (not script/server timezone)
+    const todayCell = logSheet.getRange(1, 20);
+    todayCell.setFormula('=TODAY()');
+    SpreadsheetApp.flush();
+    const today = todayCell.getValue();
+    todayCell.clearContent();
     const dateCol = [];
     for (let i = 0; i < numRows; i++) {
       dateCol.push([today]);
