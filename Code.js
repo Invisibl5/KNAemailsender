@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.7';
+const VERSION = '1.0.8';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -171,9 +171,7 @@ function importFromDrive() {
 // --- Dashboard → Log sync (button entry point) ---
 // Log: A–C = Math Sent, E–G = Reading Sent, I–N = Issue (Subject,LoginID,Name,Trigger #,Note,Date)
 //
-// I–L = data to see, M–N = where you enter Status and Notes. No FILTER formula in I–L (that would be circular).
-// After you hit Log: we add the row to the Log and clear Status (M) and Notes (N) on the dashboard so the row disappears.
-// Use Data > Create a filter on the I–N range, then filter column M (Status) to "Issue". You’ll only see Issue rows; when you log one, it’s cleared and drops off the list.
+// Log button only copies to the Log (does not clear Status/Notes). Use your FILTER formula to hide logged rows.
 
 /** Expected dashboard headers (row 1). Status values: Not Sent, Issue, Sent. */
 const DASHBOARD_HEADERS = ['LoginID', 'Name', 'Trigger #', 'Email', 'Status', 'Notes'];
@@ -238,7 +236,6 @@ function syncDashboardToLog() {
   if (lastRow < 2) return;
 
   const issueRows = [];
-  const issueSheetRows = []; // 1-based sheet row numbers for rows we log as Issue (so we can clear M,N after)
   const sentMathRows = [];
   const sentReadingRows = [];
 
@@ -258,7 +255,6 @@ function syncDashboardToLog() {
 
     if (status.toLowerCase() === 'issue') {
       issueRows.push([subject, loginId, studentName, triggerNum, note]);
-      issueSheetRows.push(2 + i); // 1-based sheet row (data starts row 2)
     } else if (status.toLowerCase() === 'sent') {
       if (isMath) {
         sentMathRows.push([loginId, studentName, triggerNum]);
@@ -291,12 +287,6 @@ function syncDashboardToLog() {
       dateCol.push([today]);
     }
     logSheet.getRange(nextRow, 14, dateCol.length, 1).setValues(dateCol);
-    // Clear Status and Notes on the dashboard for the rows we just logged so they "move" off the list
-    for (let r = 0; r < issueSheetRows.length; r++) {
-      const sheetRow = issueSheetRows[r];
-      sheet.getRange(sheetRow, col.status).clearContent();
-      if (col.notes) sheet.getRange(sheetRow, col.notes).clearContent();
-    }
   }
 
   const msg = [
