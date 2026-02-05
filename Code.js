@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.3';
+const VERSION = '1.0.4';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -170,8 +170,19 @@ function importFromDrive() {
 
 // --- Dashboard → Log sync (button entry point) ---
 // Log Issue columns: G=Subject, I–N=Subject,LoginID,Name,Trigger #,Note,Date
-// Filter to exclude rows logged today (A=LoginID; match Log J, exclude when Log N=TODAY()):
-//   =FILTER(A:A, E:E="SEND EMAIL", COUNTIFS(Log!J:J, A:A, Log!N:N, TODAY())=0)
+//
+// FILTER FORMULAS (use these so logged rows disappear from the view):
+// - Formula must reference the DASHBOARD sheet by name so it compares the right LoginIDs.
+// - Put the formula on the sheet where you want the filtered list (can be same sheet or a "View" sheet).
+// - Replace "SEND EMAIL" with your exact Status text if different.
+//
+// Math (exclude rows logged today as Math):
+//   =FILTER('Math Dashboard'!A:F, 'Math Dashboard'!E:E="SEND EMAIL", COUNTIFS(Log!J:J, 'Math Dashboard'!A:A, Log!N:N, TODAY(), Log!I:I, "Math")=0)
+//
+// Reading (exclude rows logged today as Reading):
+//   =FILTER('Reading Dashboard'!A:F, 'Reading Dashboard'!E:E="SEND EMAIL", COUNTIFS(Log!J:J, 'Reading Dashboard'!A:A, Log!N:N, TODAY(), Log!I:I, "Reading")=0)
+//
+// If the formula is ON the dashboard itself, you can use A:F and E:E and A:A (no sheet name).
 
 /** Expected dashboard headers (row 1). Status values: Not Sent, Issue, Sent. */
 const DASHBOARD_HEADERS = ['LoginID', 'Name', 'Trigger #', 'Email', 'Status', 'Notes'];
