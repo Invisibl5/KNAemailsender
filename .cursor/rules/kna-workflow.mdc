@@ -1,0 +1,19 @@
+---
+description: Version and commit workflow for KNA Email Sender
+globs: Code.js, **/*.js
+---
+
+# KNA Email Sender – version and commit
+
+When you change code in this project:
+
+1. **Bump the version**  
+   Update the `VERSION` constant in `Code.js` (e.g. `1.0.2` → `1.0.3`). Use the comment above it as a reminder.
+
+2. **Commit and push**  
+   After edits, always commit the changes and push to `main` so GitHub Actions can sync to Apps Script.
+
+Example:
+- Edit `Code.js` (and/or other files).
+- In `Code.js`, set `const VERSION = '1.0.X';` to the next version.
+- Run: `git add . && git commit -m "Brief description" && git push origin main`
