@@ -202,13 +202,13 @@ function syncDashboardToLog() {
   let logSheet = ss.getSheetByName('Log');
   if (!logSheet) {
     logSheet = ss.insertSheet('Log');
-    // Set headers for Log (A–C Math Sent, E–G Reading Sent, I–M Issue); each setValues = 1 row
+    // Set headers for Log (A–C Math Sent, E–G Reading Sent, I–M Issue). getRange(row, col, numRows, numCols)
     const h1 = [['Math LoginID', 'Math Name', 'Math Trigger #']];
     const h2 = [['Reading LoginID', 'Reading Name', 'Reading Trigger #']];
     const h3 = [['Subject', 'LoginID', 'Name', 'Trigger #', 'Note']];
-    logSheet.getRange(1, 1, h1.length, 3).setValues(h1);
-    logSheet.getRange(1, 5, h2.length, 7).setValues(h2);
-    logSheet.getRange(1, 9, h3.length, 13).setValues(h3);
+    logSheet.getRange(1, 1, 1, 3).setValues(h1);
+    logSheet.getRange(1, 5, 1, 3).setValues(h2);
+    logSheet.getRange(1, 9, 1, 5).setValues(h3);
   }
 
   const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -255,27 +255,26 @@ function syncDashboardToLog() {
     }
   }
 
-  // Append to Log (range row count must exactly match data length)
+  // Append to Log. getRange(row, col, numRows, numCols) — 3rd/4th args are numRows/numCols, not endRow/endCol
   if (sentMathRows.length > 0) {
     const nextRow = getNextLogRow(logSheet, 1) + 1;
     const numRows = sentMathRows.length;
-    logSheet.getRange(nextRow, 1, nextRow + numRows - 1, 3).setValues(sentMathRows);
+    logSheet.getRange(nextRow, 1, numRows, 3).setValues(sentMathRows);
   }
   if (sentReadingRows.length > 0) {
     const nextRow = getNextLogRow(logSheet, 5) + 1;
     const numRows = sentReadingRows.length;
-    logSheet.getRange(nextRow, 5, nextRow + numRows - 1, 7).setValues(sentReadingRows);
+    logSheet.getRange(nextRow, 5, numRows, 3).setValues(sentReadingRows);
   }
   if (issueRows.length > 0) {
     const nextRow = getNextLogRow(logSheet, 9) + 1;
     const numRows = issueRows.length;
-    logSheet.getRange(nextRow, 9, nextRow + numRows - 1, 13).setValues(issueRows);
-    // Differentiate by subject in column G (2D array: one column, numRows rows)
+    logSheet.getRange(nextRow, 9, numRows, 5).setValues(issueRows);
     const subjectCol = [];
     for (let i = 0; i < numRows; i++) {
       subjectCol.push([issueRows[i][0]]);
     }
-    logSheet.getRange(nextRow, 7, nextRow + subjectCol.length - 1, 7).setValues(subjectCol);
+    logSheet.getRange(nextRow, 7, subjectCol.length, 1).setValues(subjectCol);
   }
 
   const msg = [
