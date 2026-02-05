@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kumon - Study Profile Export (CSV)
 // @namespace    kumon-automation
-// @version      1.9
-// @description  Export students + study profile. Adds batch fetch: lowest page ever assigned (min WorksheetNOFrom) per student+subject. Adds debug copy + list request meta (helps fix 100-student cap).
+// @version      2.0
+// @description  Export students + study profile. Adds batch fetch: lowest page ever assigned (min WorksheetNOFrom) per student+subject. Adds debug copy + auto-pagination for GetCenterAllStudentList (fix 100-student cap).
 // @author       You
 // @match        https://class-navi.digital.kumon.com/*
 // @match        https://instructor2.digital.kumon.com/*
@@ -46,6 +46,22 @@
     log(msg);
     var el = document.getElementById('kumon-sp-debug-log');
     if (el) el.textContent = debugLogLines.join('\n');
+  }
+
+  function safeJsonParse(s) {
+    if (!s || typeof s !== 'string') return null;
+    try { return JSON.parse(s); } catch (e) { return null; }
+  }
+
+  function extractListFromResponse(data) {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    if (data.StudentInfoList && Array.isArray(data.StudentInfoList)) return data.StudentInfoList;
+    if (data.CenterAllStudentList && Array.isArray(data.CenterAllStudentList)) return data.CenterAllStudentList;
+    if (data.StudentList && Array.isArray(data.StudentList)) return data.StudentList;
+    if (data.students && Array.isArray(data.students)) return data.students;
+    var first = Object.values(data).find(Array.isArray);
+    return first || [];
   }
 
   function getCurrentTargetStudentLabel() {
@@ -405,6 +421,169 @@
     return queue;
   }
 
+  // ---------- NEW: auto-pagination for student list (fix 100 cap) ----------
+  function getStudentKey(st) {
+    return String((st && (st.StudentID || st.LoginID || st.StudentId || st.loginId)) || '');
+  }
+
+  function mergeUniqueStudents(existing, incoming) {
+    var map = {};
+    var out = [];
+    (existing || []).forEach(function(s) {
+      var k = getStudentKey(s);
+      if (!k) return;
+      if (!map[k]) { map[k] = true; out.push(s); }
+    });
+    (incoming || []).forEach(function(s) {
+      var k = getStudentKey(s);
+      if (!k) return;
+      if (!map[k]) { map[k] = true; out.push(s); }
+    });
+    return out;
+  }
+
+  /**
+   * Attempts to fetch ALL students by paging through GetCenterAllStudentList.
+   * Kumon often returns first 100 only; this tries common pagination fields.
+   */
+  function fetchAllStudentsPaginated(options, callback) {
+    var onProgress = (options && options.onProgress) || function() {};
+    var onComplete = (options && options.onComplete) || callback || function() {};
+    var pageSize = (options && options.pageSize) || 100;
+    var maxPages = (options && options.maxPages) || 20; // 20*100 = 2000 safety cap
+
+    if (!lastToken) {
+      onProgress('No token. Open any student’s Set screen first.');
+      onComplete('No token', null);
+      return;
+    }
+    if (!lastStudentListMeta.url) {
+      onProgress('No list URL captured yet. Open the student list page first.');
+      onComplete('No list URL', null);
+      return;
+    }
+
+    var baseBody = safeJsonParse(lastStudentListMeta.requestBody) || {};
+    var url = lastStudentListMeta.url;
+
+    // Try a few common schemas. We'll pick the first one that yields >0 on page 2.
+    var schemas = [
+      function(offset, pageNo) { var b = Object.assign({}, baseBody); b.StartNum = offset; b.DispNum = pageSize; return b; },
+      function(offset, pageNo) { var b = Object.assign({}, baseBody); b.StartIndex = offset; b.Count = pageSize; return b; },
+      function(offset, pageNo) { var b = Object.assign({}, baseBody); b.Offset = offset; b.Limit = pageSize; return b; },
+      function(offset, pageNo) { var b = Object.assign({}, baseBody); b.PageNo = pageNo; b.DispNum = pageSize; return b; },
+      function(offset, pageNo) { var b = Object.assign({}, baseBody); b.Page = pageNo; b.PageSize = pageSize; return b; }
+    ];
+
+    function doFetch(body) {
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': lastToken },
+        body: JSON.stringify(body)
+      }).then(function(res) { return res.json(); });
+    }
+
+    var chosenSchemaIdx = null;
+    var all = [];
+
+    // Always start from offset 0
+    onProgress('Fetching page 1 …');
+    doFetch(schemas[0](0, 1)).then(function(data1) {
+      var list1 = extractListFromResponse(data1);
+      all = mergeUniqueStudents(all, list1);
+      onProgress('Page 1: got ' + list1.length + ', unique=' + all.length);
+
+      // If it already returned more than 100, we're done.
+      if (list1.length < pageSize) {
+        capturedStudents = all;
+        updateStudyProfileUI();
+        onComplete(null, { students: all, pages: 1, schema: 'single' });
+        return;
+      }
+
+      // Probe page 2 with each schema to find one that works
+      var probeOffset = pageSize;
+      var probePageNo = 2;
+
+      var probePromises = schemas.map(function(makeBody, idx) {
+        return doFetch(makeBody(probeOffset, probePageNo))
+          .then(function(d) { return { idx: idx, data: d, ok: true }; })
+          .catch(function(e) { return { idx: idx, data: null, ok: false, err: e }; });
+      });
+
+      return Promise.all(probePromises).then(function(results) {
+        // Pick schema that returns non-empty list and adds new IDs
+        for (var i = 0; i < results.length; i++) {
+          var r = results[i];
+          if (!r.ok || !r.data) continue;
+          var list2 = extractListFromResponse(r.data);
+          if (!list2 || list2.length === 0) continue;
+          var merged = mergeUniqueStudents(all, list2);
+          if (merged.length > all.length) {
+            chosenSchemaIdx = r.idx;
+            all = merged;
+            onProgress('Pagination schema #' + chosenSchemaIdx + ' works (page 2: +' + (merged.length - (merged.length - list2.length)) + ').');
+            break;
+          }
+        }
+
+        if (chosenSchemaIdx == null) {
+          onProgress('Could not find a working pagination schema. Still only have ' + all.length + '.');
+          capturedStudents = all;
+          updateStudyProfileUI();
+          onComplete(null, { students: all, pages: 1, schema: null });
+          return;
+        }
+
+        // Continue paging using chosen schema
+        var pageNo = 2;
+        var offset = pageSize;
+        var pagesFetched = 2;
+
+        function nextPage() {
+          pageNo += 1;
+          offset += pageSize;
+          pagesFetched += 1;
+          if (pagesFetched > maxPages) {
+            onProgress('Stopped at maxPages=' + maxPages + '. unique=' + all.length);
+            capturedStudents = all;
+            updateStudyProfileUI();
+            onComplete(null, { students: all, pages: pagesFetched - 1, schema: chosenSchemaIdx });
+            return;
+          }
+
+          onProgress('Fetching page ' + pageNo + ' … unique=' + all.length);
+          return doFetch(schemas[chosenSchemaIdx](offset, pageNo)).then(function(d) {
+            var list = extractListFromResponse(d);
+            var before = all.length;
+            all = mergeUniqueStudents(all, list);
+            var added = all.length - before;
+            onProgress('Page ' + pageNo + ': got ' + list.length + ', added ' + added + ', unique=' + all.length);
+            if (!list || list.length === 0 || added === 0) {
+              capturedStudents = all;
+              updateStudyProfileUI();
+              onComplete(null, { students: all, pages: pageNo, schema: chosenSchemaIdx });
+              return;
+            }
+            return new Promise(function(resolve) { setTimeout(resolve, 250); }).then(nextPage);
+          }).catch(function(err) {
+            onProgress('Error page ' + pageNo + ': ' + (err && err.message));
+            capturedStudents = all;
+            updateStudyProfileUI();
+            onComplete(err, { students: all, pages: pageNo - 1, schema: chosenSchemaIdx });
+          });
+        }
+
+        // We already merged a working page 2 in the probe loop above only if it added new IDs.
+        // Keep going from page 3.
+        return new Promise(function(resolve) { setTimeout(resolve, 250); }).then(nextPage);
+      });
+    }).catch(function(err) {
+      onProgress('List fetch failed: ' + (err && err.message));
+      onComplete(err, null);
+    });
+  }
+
   // NEW: Fetch all lowest pages across all students/subjects
   function fetchAllLowestPages(options, callback) {
     var testMode = options && options.testMode;
@@ -533,6 +712,7 @@
       '    <div class="kumon-sp-hint">Load the student list page; data is captured automatically.</div>' +
       '  </div>' +
       '  <div class="kumon-sp-block">' +
+      '    <button id="kumon-sp-fetch-all-students-btn" class="kumon-sp-btn-primary">Fetch ALL students (fix 100 cap)</button>' +
       '    <button id="kumon-sp-fetch-lowest-btn" class="kumon-sp-btn-primary">Fetch lowest pages (all students)</button>' +
       '    <button id="kumon-sp-download-lowest-btn" class="kumon-sp-btn-secondary">Download lowest pages (CSV)</button>' +
       '    <button id="kumon-sp-copy-debug-btn" class="kumon-sp-btn-secondary">Copy debug</button>' +
@@ -601,11 +781,33 @@
       URL.revokeObjectURL(a.href);
     });
 
+    document.getElementById('kumon-sp-fetch-all-students-btn').addEventListener('click', function() {
+      if (statusEl) statusEl.textContent = 'Fetching full student list…';
+      fetchAllStudentsPaginated({
+        pageSize: 100,
+        maxPages: 20,
+        onProgress: function(msg) {
+          if (statusEl) statusEl.textContent = msg;
+          debugLog(msg);
+        },
+        onComplete: function(err, data) {
+          if (err) {
+            if (statusEl) statusEl.textContent = 'Error: ' + err;
+            return;
+          }
+          var n = (data && data.students && data.students.length) || capturedStudents.length;
+          if (statusEl) statusEl.textContent = 'Students loaded: ' + n + '.';
+          updateStudyProfileUI();
+        }
+      });
+    });
+
     document.getElementById('kumon-sp-copy-debug-btn').addEventListener('click', function() {
       var meta = [
         'CapturedStudents=' + (capturedStudents ? capturedStudents.length : 0),
         'TotalCount=' + (lastStudentListMeta.totalCount != null ? lastStudentListMeta.totalCount : ''),
         'ListURL=' + (lastStudentListMeta.url || ''),
+        'ListRequestBody=' + (lastStudentListMeta.requestBody || ''),
         'CapturedAt=' + (lastStudentListMeta.capturedAt || ''),
         '--- Debug ---'
       ].join('\n');
