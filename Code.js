@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.10';
+const VERSION = '1.0.11';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -216,11 +216,11 @@ function syncDashboardToLog() {
 
   const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const col = getColumnIndices(headerRow);
-  // Use the LoginID/Name/Trigger # block that contains Status (second block: I,J,K = 9,10,11 when Status in M)
+  // Use the LoginID/Name/Trigger # block that contains Status (second block: I,J,K,L,M,N = LoginID,Name,Email,Trigger #,Status,Notes)
   if (col.status >= 4) {
     col.loginId = col.status - 4;
     col.name = col.status - 3;
-    col.triggerNum = col.status - 2;
+    col.triggerNum = col.status - 1; // Trigger # is in L (Email is K = status - 2)
   }
 
   if (!col.loginId || !col.status) {
