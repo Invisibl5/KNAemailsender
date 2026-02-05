@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.17';
+const VERSION = '1.0.18';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -222,7 +222,8 @@ function syncDashboardToLog() {
     logSheet.getRange(1, 9, 1, 6).setValues(h3);
   }
 
-  const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  // I–N headers are in row 2; data starts row 3
+  const headerRow = sheet.getRange(2, 1, 2, sheet.getLastColumn()).getValues()[0];
   const col = getColumnIndices(headerRow);
   // Use the LoginID/Name/Trigger # block that contains Status (second block: I,J,K,L,M,N = LoginID,Name,Email,Trigger #,Status,Notes)
   if (col.status >= 4) {
@@ -234,14 +235,14 @@ function syncDashboardToLog() {
   if (!col.loginId || !col.status) {
     SpreadsheetApp.getUi().alert(
       'Missing headers',
-      'Dashboard must have headers: LoginID, Name, Trigger #, Email, Status, Notes (in row 1).',
+      'Dashboard must have headers for I–N (LoginID, Name, Trigger #, Email, Status, Notes) in row 2.',
       SpreadsheetApp.getUi().ButtonSet.OK
     );
     return;
   }
 
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return;
+  if (lastRow < 3) return;
 
   const issueRows = [];
   const issueSheetRows = [];
@@ -250,7 +251,7 @@ function syncDashboardToLog() {
   const sentReadingRows = [];
   const sentReadingSheetRows = [];
 
-  const dataRange = sheet.getRange(2, 1, lastRow, sheet.getLastColumn());
+  const dataRange = sheet.getRange(3, 1, lastRow, sheet.getLastColumn());
   const rows = dataRange.getValues();
 
   for (let i = 0; i < rows.length; i++) {
@@ -266,14 +267,14 @@ function syncDashboardToLog() {
 
     if (status.toLowerCase() === 'issue') {
       issueRows.push([subject, loginId, studentName, triggerNum, note]);
-      issueSheetRows.push(2 + i);
+      issueSheetRows.push(3 + i);
     } else if (status.toLowerCase() === 'sent') {
       if (isMath) {
         sentMathRows.push([loginId, studentName, triggerNum]);
-        sentMathSheetRows.push(2 + i);
+        sentMathSheetRows.push(3 + i);
       } else {
         sentReadingRows.push([loginId, studentName, triggerNum]);
-        sentReadingSheetRows.push(2 + i);
+        sentReadingSheetRows.push(3 + i);
       }
     }
   }
@@ -404,9 +405,10 @@ function findSheetByName(ss, word1, word2) {
 
 function loadOneDashboard(sheet, loggedTodayIds, clearMaxRows) {
   const lastRow = sheet.getLastRow();
-  sheet.getRange(2, 9, Math.max(lastRow, clearMaxRows), 4).clearContent();
-  if (lastRow < 2) return 0;
-  const data = sheet.getRange(2, 1, lastRow, 7).getValues(); // A:G
+  // I–N headers in row 2; data starts row 3
+  sheet.getRange(3, 9, Math.max(lastRow, clearMaxRows), 4).clearContent();
+  if (lastRow < 3) return 0;
+  const data = sheet.getRange(3, 1, lastRow, 7).getValues(); // A:G from row 3
   const out = [];
   for (let r = 0; r < data.length; r++) {
     const row = data[r];
@@ -415,7 +417,7 @@ function loadOneDashboard(sheet, loggedTodayIds, clearMaxRows) {
     out.push([row[0], row[1], row[5], row[6]]); // A, B, F, G -> I, J, K, L
   }
   if (out.length > 0) {
-    sheet.getRange(2, 9, out.length, 4).setValues(out);
+    sheet.getRange(3, 9, out.length, 4).setValues(out);
   }
   return out.length;
 }
