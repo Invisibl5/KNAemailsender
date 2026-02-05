@@ -169,6 +169,9 @@ function importFromDrive() {
 }
 
 // --- Dashboard → Log sync (button entry point) ---
+// Log Issue columns: G=Subject, I–N=Subject,LoginID,Name,Trigger #,Note,Date
+// Filter to exclude rows logged today (A=LoginID; match Log J, exclude when Log N=TODAY()):
+//   =FILTER(A:A, E:E="SEND EMAIL", COUNTIFS(Log!J:J, A:A, Log!N:N, TODAY())=0)
 
 /** Expected dashboard headers (row 1). Status values: Not Sent, Issue, Sent. */
 const DASHBOARD_HEADERS = ['LoginID', 'Name', 'Trigger #', 'Email', 'Status', 'Notes'];
@@ -202,13 +205,13 @@ function syncDashboardToLog() {
   let logSheet = ss.getSheetByName('Log');
   if (!logSheet) {
     logSheet = ss.insertSheet('Log');
-    // Set headers for Log (A–C Math Sent, E–G Reading Sent, I–M Issue). getRange(row, col, numRows, numCols)
+    // Set headers for Log (A–C Math Sent, E–G Reading Sent, I–N Issue). getRange(row, col, numRows, numCols)
     const h1 = [['Math LoginID', 'Math Name', 'Math Trigger #']];
     const h2 = [['Reading LoginID', 'Reading Name', 'Reading Trigger #']];
-    const h3 = [['Subject', 'LoginID', 'Name', 'Trigger #', 'Note']];
+    const h3 = [['Subject', 'LoginID', 'Name', 'Trigger #', 'Note', 'Date']];
     logSheet.getRange(1, 1, 1, 3).setValues(h1);
     logSheet.getRange(1, 5, 1, 3).setValues(h2);
-    logSheet.getRange(1, 9, 1, 5).setValues(h3);
+    logSheet.getRange(1, 9, 1, 6).setValues(h3);
   }
 
   const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -269,12 +272,18 @@ function syncDashboardToLog() {
   if (issueRows.length > 0) {
     const nextRow = getNextLogRow(logSheet, 9) + 1;
     const numRows = issueRows.length;
+    // Issue: G=Subject, I–M=Subject,LoginID,Name,Trigger #,Note; N=Date
     logSheet.getRange(nextRow, 9, numRows, 5).setValues(issueRows);
     const subjectCol = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dateCol = [];
     for (let i = 0; i < numRows; i++) {
       subjectCol.push([issueRows[i][0]]);
+      dateCol.push([today]);
     }
     logSheet.getRange(nextRow, 7, subjectCol.length, 1).setValues(subjectCol);
+    logSheet.getRange(nextRow, 14, dateCol.length, 1).setValues(dateCol);
   }
 
   const msg = [
