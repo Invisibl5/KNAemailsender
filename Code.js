@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.13';
+const VERSION = '1.0.14';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -313,20 +313,17 @@ function syncDashboardToLog() {
     }
   }
 
-  // Delete all logged rows (Issue + Sent) from bottom to top so the list moves up
-  const rowsToDelete = issueSheetRows.concat(sentMathSheetRows || [], sentReadingSheetRows || []);
-  if (rowsToDelete.length > 0) {
-    const sorted = rowsToDelete.slice().sort(function (a, b) { return b - a; });
-    for (let d = 0; d < sorted.length; d++) {
-      sheet.deleteRow(sorted[d]);
-    }
+  // Clear I:N only for logged rows (don't delete rows — A–G stay intact)
+  const rowsCleared = issueSheetRows.concat(sentMathSheetRows || [], sentReadingSheetRows || []);
+  for (let r = 0; r < rowsCleared.length; r++) {
+    sheet.getRange(rowsCleared[r], 9, 1, 6).clearContent(); // one row, cols I–N
   }
 
   const msg = [
     subject + ' Dashboard → Log',
     'Sent: ' + (isMath ? sentMathRows.length : sentReadingRows.length),
     'Issues: ' + issueRows.length,
-    rowsToDelete.length > 0 ? 'Rows removed from sheet.' : ''
+    rowsCleared.length > 0 ? 'Cleared I:N for those rows (A–G unchanged).' : ''
   ].join('\n');
   SpreadsheetApp.getUi().alert('Move complete', msg, SpreadsheetApp.getUi().ButtonSet.OK);
 }
