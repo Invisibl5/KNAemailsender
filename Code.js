@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.12';
+const VERSION = '1.0.13';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -21,7 +21,8 @@ function onOpen() {
     .addItem('Import from Drive', 'importFromDrive')
     .addItem('Create / Open Import Folder', 'createOrOpenImportFolder')
     .addSeparator()
-    .addItem('Sync Dashboard to Log', 'syncDashboardToLog')
+    .addItem('Load', 'loadToWorkArea')
+    .addItem('Move', 'syncDashboardToLog')
     .addToUi();
 }
 
@@ -243,9 +244,11 @@ function syncDashboardToLog() {
   if (lastRow < 2) return;
 
   const issueRows = [];
-  const issueSheetRows = []; // 1-based sheet row numbers for rows we log (clear Status/Notes after)
+  const issueSheetRows = [];
   const sentMathRows = [];
+  const sentMathSheetRows = [];
   const sentReadingRows = [];
+  const sentReadingSheetRows = [];
 
   const dataRange = sheet.getRange(2, 1, lastRow, sheet.getLastColumn());
   const rows = dataRange.getValues();
@@ -267,8 +270,10 @@ function syncDashboardToLog() {
     } else if (status.toLowerCase() === 'sent') {
       if (isMath) {
         sentMathRows.push([loginId, studentName, triggerNum]);
+        sentMathSheetRows.push(2 + i);
       } else {
         sentReadingRows.push([loginId, studentName, triggerNum]);
+        sentReadingSheetRows.push(2 + i);
       }
     }
   }
@@ -308,12 +313,99 @@ function syncDashboardToLog() {
     }
   }
 
+  // Delete all logged rows (Issue + Sent) from bottom to top so the list moves up
+  const rowsToDelete = issueSheetRows.concat(sentMathSheetRows || [], sentReadingSheetRows || []);
+  if (rowsToDelete.length > 0) {
+    const sorted = rowsToDelete.slice().sort(function (a, b) { return b - a; });
+    for (let d = 0; d < sorted.length; d++) {
+      sheet.deleteRow(sorted[d]);
+    }
+  }
+
   const msg = [
     subject + ' Dashboard → Log',
     'Sent: ' + (isMath ? sentMathRows.length : sentReadingRows.length),
-    'Issues: ' + issueRows.length
+    'Issues: ' + issueRows.length,
+    rowsToDelete.length > 0 ? 'Rows removed from sheet.' : ''
   ].join('\n');
-  SpreadsheetApp.getUi().alert('Sync complete', msg, SpreadsheetApp.getUi().ButtonSet.OK);
+  SpreadsheetApp.getUi().alert('Move complete', msg, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+/**
+ * Load: runs the filter (E=SEND EMAIL, not logged today) and writes the result as values into I:L.
+ * Use Load first, then fill Status/Notes in M:N, then Move to log and remove those rows.
+ */
+function loadToWorkArea() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  const name = sheet.getName();
+
+  const isMath = name.toLowerCase().indexOf('math') !== -1;
+  const isReading = name.toLowerCase().indexOf('reading') !== -1;
+  const isDashboard = name.toLowerCase().indexOf('dashboard') !== -1;
+
+  if (!isDashboard || (!isMath && !isReading)) {
+    SpreadsheetApp.getUi().alert('Wrong sheet', 'Run Load from "Math Dashboard" or "Reading Dashboard".', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const subject = isMath ? 'Math' : 'Reading';
+  const logSheet = ss.getSheetByName('Log');
+  if (!logSheet) {
+    SpreadsheetApp.getUi().alert('No Log sheet', 'Create a Log sheet first (run Move once to create it).', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  // Today in spreadsheet timezone
+  const todayCell = logSheet.getRange(1, 20);
+  todayCell.setFormula('=TODAY()');
+  SpreadsheetApp.flush();
+  const today = todayCell.getValue();
+  todayCell.clearContent();
+
+  // LoginIDs already logged today for this subject (Log I=subject, J=LoginID, N=date)
+  const logLastRow = Math.max(logSheet.getLastRow(), 1);
+  const logData = logSheet.getRange(2, 9, logLastRow, 14).getValues(); // I:N
+  const loggedTodayIds = {};
+  const todayT = (today && today.getTime) ? today.getTime() : (typeof today === 'number' ? today : 0);
+  const todayDay = Math.floor(todayT / 86400000);
+  for (let r = 0; r < logData.length; r++) {
+    const row = logData[r];
+    if (String(row[0] || '').trim() !== subject) continue;
+    const d = row[5];
+    if (d == null) continue;
+    const t = (d && d.getTime) ? d.getTime() : (typeof d === 'number' ? d : 0);
+    if (Math.floor(t / 86400000) === todayDay) {
+      loggedTodayIds[String(row[1])] = true; // J = LoginID
+    }
+  }
+
+  // Dashboard: A=1, B=2, E=5, F=6, G=7. Filter E="SEND EMAIL" and A not in loggedTodayIds.
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    sheet.getRange(2, 9, 500, 12).clearContent();
+    SpreadsheetApp.getUi().alert('Load complete', 'No rows to load.', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const data = sheet.getRange(2, 1, lastRow, 7).getValues(); // A:G
+  const out = [];
+  for (let r = 0; r < data.length; r++) {
+    const row = data[r];
+    const action = String((row[4] || '')).trim(); // E
+    if (action.toLowerCase() !== 'send email') continue;
+    const loginId = String(row[0] || '');
+    if (loggedTodayIds[loginId]) continue;
+    out.push([row[0], row[1], row[5], row[6]]); // A, B, F, G -> I, J, K, L
+  }
+
+  // Clear I:L from row 2, then write (getRange(row, col, numRows, numCols))
+  sheet.getRange(2, 9, Math.max(lastRow, 500), 4).clearContent();
+  if (out.length > 0) {
+    sheet.getRange(2, 9, out.length, 4).setValues(out);
+  }
+
+  SpreadsheetApp.getUi().alert('Load complete', 'Loaded ' + out.length + ' rows into I:L. Fill Status/Notes in M:N, then hit Move.', SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
 /**
