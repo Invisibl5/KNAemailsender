@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kumon - Study Profile Export (CSV)
 // @namespace    kumon-automation
-// @version      1.8
-// @description  Export students + study profile. Adds batch fetch: lowest page ever assigned (min WorksheetNOFrom) per student+subject.
+// @version      1.9
+// @description  Export students + study profile. Adds batch fetch: lowest page ever assigned (min WorksheetNOFrom) per student+subject. Adds debug copy + list request meta (helps fix 100-student cap).
 // @author       You
 // @match        https://class-navi.digital.kumon.com/*
 // @match        https://instructor2.digital.kumon.com/*
@@ -33,8 +33,11 @@
   // NEW: lowest-page batch data
   var allLowestPagesData = { entries: [], fetchedAt: null };
 
+  // NEW: student list capture meta (helps diagnose pagination / 100-cap)
+  var lastStudentListMeta = { url: null, requestBody: null, receivedCount: 0, totalCount: null, capturedAt: null };
+
   var debugLogLines = [];
-  var DEBUG_LOG_MAX = 50;
+  var DEBUG_LOG_MAX = 300;
 
   function debugLog(msg) {
     var line = '[' + new Date().toLocaleTimeString() + '] ' + msg;
@@ -117,10 +120,30 @@
       var first = Object.values(data).find(Array.isArray);
       return first || [];
     };
-    var dispatchList = function(list) {
+    var tryFindTotalCount = function(data) {
+      if (!data || typeof data !== 'object') return null;
+      var candidates = ['TotalCount', 'totalCount', 'total', 'Total', 'Count', 'count'];
+      for (var i = 0; i < candidates.length; i++) {
+        var k = candidates[i];
+        if (data[k] != null && !isNaN(Number(data[k]))) return Number(data[k]);
+      }
+      // Sometimes nested
+      if (data.Result && data.Result.TotalCount != null && !isNaN(Number(data.Result.TotalCount))) return Number(data.Result.TotalCount);
+      return null;
+    };
+
+    var dispatchList = function(list, url, requestBody, rawData) {
       if (list.length === 0) return;
       try {
-        document.dispatchEvent(new CustomEvent('KumonStudyProfileCapture', { detail: { studentsJson: JSON.stringify(list) } }));
+        document.dispatchEvent(new CustomEvent('KumonStudyProfileCapture', {
+          detail: {
+            studentsJson: JSON.stringify(list),
+            url: url || null,
+            requestBody: requestBody || null,
+            totalCount: tryFindTotalCount(rawData),
+            capturedAt: new Date().toISOString()
+          }
+        }));
       } catch (e) {}
     };
     var dispatchStudyResult = function(data, requestBody) {
@@ -147,7 +170,7 @@
             var data = null;
             if (xhr.response != null && typeof xhr.response === 'object') data = xhr.response;
             else if (xhr.responseText) data = JSON.parse(xhr.responseText);
-            if (data) dispatchList(extractList(data));
+            if (data) dispatchList(extractList(data), url, reqBody, data);
           } catch (e) {}
         });
       }
@@ -187,7 +210,7 @@
       if (isList(url)) {
         return origFetch.apply(this, arguments).then(function(res) {
           var clone = res.clone();
-          clone.json().then(function(data) { if (data) dispatchList(extractList(data)); }).catch(function() {});
+          clone.json().then(function(data) { if (data) dispatchList(extractList(data), url, reqBody, data); }).catch(function() {});
           return res;
         });
       }
@@ -237,7 +260,18 @@
       var list = JSON.parse(detail.studentsJson);
       if (Array.isArray(list) && list.length > 0) {
         capturedStudents = list;
+        lastStudentListMeta.url = detail.url || null;
+        lastStudentListMeta.requestBody = detail.requestBody || null;
+        lastStudentListMeta.receivedCount = list.length;
+        lastStudentListMeta.totalCount = detail.totalCount != null ? detail.totalCount : null;
+        lastStudentListMeta.capturedAt = detail.capturedAt || new Date().toISOString();
         log('captured', list.length, 'students for study profile');
+        if (lastStudentListMeta.totalCount && lastStudentListMeta.totalCount > list.length) {
+          debugLog('Student list looks paginated: got ' + list.length + ' / total ' + lastStudentListMeta.totalCount + '. Likely API returns first page (often 100).');
+          debugLog('List URL: ' + (lastStudentListMeta.url || '(unknown)'));
+        } else {
+          debugLog('Student list captured: ' + list.length + (lastStudentListMeta.totalCount ? (' / total ' + lastStudentListMeta.totalCount) : ''));
+        }
         updateStudyProfileUI();
       }
     } catch (e) {
@@ -466,7 +500,11 @@
   // ---------- UI ----------
   function updateStudyProfileUI() {
     var countEl = document.getElementById('kumon-study-profile-count');
-    if (countEl) countEl.textContent = capturedStudents.length + ' student' + (capturedStudents.length === 1 ? '' : 's');
+    if (countEl) {
+      var base = capturedStudents.length + ' student' + (capturedStudents.length === 1 ? '' : 's');
+      if (lastStudentListMeta.totalCount) base += ' (total ' + lastStudentListMeta.totalCount + ')';
+      countEl.textContent = base;
+    }
 
     var srEl = document.getElementById('kumon-sp-study-result-status');
     if (srEl) {
@@ -497,6 +535,7 @@
       '  <div class="kumon-sp-block">' +
       '    <button id="kumon-sp-fetch-lowest-btn" class="kumon-sp-btn-primary">Fetch lowest pages (all students)</button>' +
       '    <button id="kumon-sp-download-lowest-btn" class="kumon-sp-btn-secondary">Download lowest pages (CSV)</button>' +
+      '    <button id="kumon-sp-copy-debug-btn" class="kumon-sp-btn-secondary">Copy debug</button>' +
       '    <div id="kumon-sp-fetch-status" class="kumon-sp-hint" style="min-height:1.2em;"></div>' +
       '  </div>' +
       '  <div class="kumon-sp-block">' +
@@ -560,6 +599,26 @@
       a.download = 'kumon-lowest-pages-' + new Date().toISOString().slice(0, 10) + '.csv';
       a.click();
       URL.revokeObjectURL(a.href);
+    });
+
+    document.getElementById('kumon-sp-copy-debug-btn').addEventListener('click', function() {
+      var meta = [
+        'CapturedStudents=' + (capturedStudents ? capturedStudents.length : 0),
+        'TotalCount=' + (lastStudentListMeta.totalCount != null ? lastStudentListMeta.totalCount : ''),
+        'ListURL=' + (lastStudentListMeta.url || ''),
+        'CapturedAt=' + (lastStudentListMeta.capturedAt || ''),
+        '--- Debug ---'
+      ].join('\n');
+      var text = meta + '\n' + debugLogLines.join('\n');
+      try {
+        navigator.clipboard.writeText(text).then(function() {
+          alert('Debug copied to clipboard.');
+        }).catch(function() {
+          prompt('Copy debug:', text);
+        });
+      } catch (e) {
+        prompt('Copy debug:', text);
+      }
     });
 
     debugLog('Panel ready. Load student list, then open any student Set screen once (to capture token).');
