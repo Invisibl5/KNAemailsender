@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.4';
+const VERSION = '1.0.5';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -169,7 +169,7 @@ function importFromDrive() {
 }
 
 // --- Dashboard → Log sync (button entry point) ---
-// Log Issue columns: G=Subject, I–N=Subject,LoginID,Name,Trigger #,Note,Date
+// Log: A–C = Math Sent (LoginID,Name,Trigger #), E–G = Reading Sent (LoginID,Name,Trigger #), I–N = Issue (Subject,LoginID,Name,Trigger #,Note,Date)
 //
 // FILTER FORMULAS (use these so logged rows disappear from the view):
 // - Formula must reference the DASHBOARD sheet by name so it compares the right LoginIDs.
@@ -227,6 +227,12 @@ function syncDashboardToLog() {
 
   const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const col = getColumnIndices(headerRow);
+  // Use the LoginID/Name/Trigger # block that contains Status (second block: I,J,K = 9,10,11 when Status in M)
+  if (col.status >= 4) {
+    col.loginId = col.status - 4;
+    col.name = col.status - 3;
+    col.triggerNum = col.status - 2;
+  }
 
   if (!col.loginId || !col.status) {
     SpreadsheetApp.getUi().alert(
@@ -283,17 +289,14 @@ function syncDashboardToLog() {
   if (issueRows.length > 0) {
     const nextRow = getNextLogRow(logSheet, 9) + 1;
     const numRows = issueRows.length;
-    // Issue: G=Subject, I–M=Subject,LoginID,Name,Trigger #,Note; N=Date
+    // Issue: I–N = Subject,LoginID,Name,Trigger #,Note,Date (do not write to G; G is for Reading Sent Trigger # only)
     logSheet.getRange(nextRow, 9, numRows, 5).setValues(issueRows);
-    const subjectCol = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const dateCol = [];
     for (let i = 0; i < numRows; i++) {
-      subjectCol.push([issueRows[i][0]]);
       dateCol.push([today]);
     }
-    logSheet.getRange(nextRow, 7, subjectCol.length, 1).setValues(subjectCol);
     logSheet.getRange(nextRow, 14, dateCol.length, 1).setValues(dateCol);
   }
 
