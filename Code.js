@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.8';
+const VERSION = '1.0.9';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -236,6 +236,7 @@ function syncDashboardToLog() {
   if (lastRow < 2) return;
 
   const issueRows = [];
+  const issueSheetRows = []; // 1-based sheet row numbers for rows we log (clear Status/Notes after)
   const sentMathRows = [];
   const sentReadingRows = [];
 
@@ -255,6 +256,7 @@ function syncDashboardToLog() {
 
     if (status.toLowerCase() === 'issue') {
       issueRows.push([subject, loginId, studentName, triggerNum, note]);
+      issueSheetRows.push(2 + i);
     } else if (status.toLowerCase() === 'sent') {
       if (isMath) {
         sentMathRows.push([loginId, studentName, triggerNum]);
@@ -287,6 +289,12 @@ function syncDashboardToLog() {
       dateCol.push([today]);
     }
     logSheet.getRange(nextRow, 14, dateCol.length, 1).setValues(dateCol);
+    // Clear Status and Notes on the dashboard for the rows we just logged
+    for (let r = 0; r < issueSheetRows.length; r++) {
+      const sheetRow = issueSheetRows[r];
+      sheet.getRange(sheetRow, col.status).clearContent();
+      if (col.notes) sheet.getRange(sheetRow, col.notes).clearContent();
+    }
   }
 
   const msg = [
