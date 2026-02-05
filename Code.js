@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.15';
+const VERSION = '1.0.16';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -313,30 +313,12 @@ function syncDashboardToLog() {
     }
   }
 
-  // Remove logged rows from the I:N "table" only: shift rows up so table compacts (A–G untouched)
-  const rowsToRemove = issueSheetRows.concat(sentMathSheetRows || [], sentReadingSheetRows || []);
-  if (rowsToRemove.length > 0) {
-    const sorted = rowsToRemove.slice().sort(function (a, b) { return b - a; });
-    let tableLastRow = 2;
-    for (let r = sheet.getLastRow(); r >= 2; r--) {
-      if (sheet.getRange(r, 9).getValue() !== '' && sheet.getRange(r, 9).getValue() !== null) {
-        tableLastRow = r;
-        break;
-      }
-    }
+  // Delete full rows for logged rows (from bottom to top)
+  const rowsToDelete = issueSheetRows.concat(sentMathSheetRows || [], sentReadingSheetRows || []);
+  if (rowsToDelete.length > 0) {
+    const sorted = rowsToDelete.slice().sort(function (a, b) { return b - a; });
     for (let d = 0; d < sorted.length; d++) {
-      const R = sorted[d];
-      if (R > tableLastRow) continue;
-      if (R === tableLastRow) {
-        sheet.getRange(R, 9, 1, 6).clearContent();
-        tableLastRow--;
-      } else {
-        const numRows = tableLastRow - R;
-        const block = sheet.getRange(R + 1, 9, numRows, 6).getValues(); // rows R+1..tableLastRow, cols I–N
-        sheet.getRange(R, 9, numRows, 6).setValues(block);
-        sheet.getRange(tableLastRow, 9, 1, 6).clearContent();
-        tableLastRow--;
-      }
+      sheet.deleteRow(sorted[d]);
     }
   }
 
@@ -344,7 +326,7 @@ function syncDashboardToLog() {
     subject + ' Dashboard → Log',
     'Sent: ' + (isMath ? sentMathRows.length : sentReadingRows.length),
     'Issues: ' + issueRows.length,
-    rowsToRemove.length > 0 ? 'Removed those rows from I:N table (A–G unchanged).' : ''
+    rowsToDelete.length > 0 ? 'Rows removed from sheet.' : ''
   ].join('\n');
   SpreadsheetApp.getUi().alert('Move complete', msg, SpreadsheetApp.getUi().ButtonSet.OK);
 }
