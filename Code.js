@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.19';
+const VERSION = '1.0.20';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -420,6 +420,12 @@ function loadOneDashboard(sheet, loggedTodayIds, clearMaxRows) {
   }
   if (out.length > 0) {
     sheet.getRange(3, 9, out.length, 4).setValues(out);
+    // Set Status (M) to "Not Sent" for all loaded rows
+    const statusCol = [];
+    for (let i = 0; i < out.length; i++) {
+      statusCol.push(['Not Sent']);
+    }
+    sheet.getRange(3, 13, statusCol.length, 1).setValues(statusCol);
   }
   return out.length;
 }
