@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.18';
+const VERSION = '1.0.19';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -256,11 +256,13 @@ function syncDashboardToLog() {
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const status = String((row[col.status - 1] || '')).trim();
+    const loginId = row[col.loginId - 1];
+    // Only process rows that have work-area data (LoginID in I); skip blank rows
+    if (loginId === null || loginId === undefined || String(loginId).trim() === '') continue;
 
+    const status = String((row[col.status - 1] || '')).trim();
     if (status === '' || status.toLowerCase() === 'not sent') continue;
 
-    const loginId = row[col.loginId - 1];
     const studentName = row[col.name - 1];
     const triggerNum = row[col.triggerNum - 1];
     const note = (col.notes && row[col.notes - 1] != null) ? row[col.notes - 1] : '';
