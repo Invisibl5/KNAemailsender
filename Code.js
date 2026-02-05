@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.5';
+const VERSION = '1.0.6';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -171,18 +171,16 @@ function importFromDrive() {
 // --- Dashboard → Log sync (button entry point) ---
 // Log: A–C = Math Sent (LoginID,Name,Trigger #), E–G = Reading Sent (LoginID,Name,Trigger #), I–N = Issue (Subject,LoginID,Name,Trigger #,Note,Date)
 //
-// FILTER FORMULAS (use these so logged rows disappear from the view):
-// - Formula must reference the DASHBOARD sheet by name so it compares the right LoginIDs.
-// - Put the formula on the sheet where you want the filtered list (can be same sheet or a "View" sheet).
-// - Replace "SEND EMAIL" with your exact Status text if different.
+// FILTER FORMULAS — use the LoginID from the SAME BLOCK you're filtering (I–N block uses column I, not A).
 //
-// Math (exclude rows logged today as Math):
-//   =FILTER('Math Dashboard'!A:F, 'Math Dashboard'!E:E="SEND EMAIL", COUNTIFS(Log!J:J, 'Math Dashboard'!A:A, Log!N:N, TODAY(), Log!I:I, "Math")=0)
+// Math Dashboard I–N (Issue block: LoginID in I, Status in M). Exclude rows logged today as Math:
+//   =FILTER('Math Dashboard'!I:N, 'Math Dashboard'!M:M="Issue", COUNTIFS(Log!J:J, 'Math Dashboard'!I:I, Log!N:N, TODAY(), Log!I:I, "Math")=0)
 //
-// Reading (exclude rows logged today as Reading):
-//   =FILTER('Reading Dashboard'!A:F, 'Reading Dashboard'!E:E="SEND EMAIL", COUNTIFS(Log!J:J, 'Reading Dashboard'!A:A, Log!N:N, TODAY(), Log!I:I, "Reading")=0)
+// Reading Dashboard I–N (Issue block):
+//   =FILTER('Reading Dashboard'!I:N, 'Reading Dashboard'!M:M="Issue", COUNTIFS(Log!J:J, 'Reading Dashboard'!I:I, Log!N:N, TODAY(), Log!I:I, "Reading")=0)
 //
-// If the formula is ON the dashboard itself, you can use A:F and E:E and A:A (no sheet name).
+// First block (A:C, E=F) if you filter by Action "SEND EMAIL" — use column A for that block:
+//   =FILTER('Math Dashboard'!A:C, 'Math Dashboard'!E:E="SEND EMAIL", COUNTIFS(Log!J:J, 'Math Dashboard'!A:A, Log!N:N, TODAY(), Log!I:I, "Math")=0)
 
 /** Expected dashboard headers (row 1). Status values: Not Sent, Issue, Sent. */
 const DASHBOARD_HEADERS = ['LoginID', 'Name', 'Trigger #', 'Email', 'Status', 'Notes'];
