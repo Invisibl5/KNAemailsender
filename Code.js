@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.11';
+const VERSION = '1.0.12';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -171,7 +171,14 @@ function importFromDrive() {
 // --- Dashboard → Log sync (button entry point) ---
 // Log: A–C = Math Sent, E–G = Reading Sent, I–N = Issue (Subject,LoginID,Name,Trigger #,Note,Date)
 //
-// Log button only copies to the Log (does not clear Status/Notes). Use your FILTER formula to hide logged rows.
+// FILTER: To have Status and Notes shift up with the filtered rows, include M and N in the FILTER array.
+// Then the spilled result has Status and Notes as the last columns (correct for each row). Those cells are
+// read-only (formula output); to edit Status/Notes, edit the source row on the dashboard.
+//
+// Math (A,B,F,G + M,N so Status/Notes align):
+//   =FILTER({'Math Dashboard'!A:A,'Math Dashboard'!B:B,'Math Dashboard'!F:F,'Math Dashboard'!G:G,'Math Dashboard'!M:M,'Math Dashboard'!N:N}, 'Math Dashboard'!E:E="SEND EMAIL", ISNA(MATCH('Math Dashboard'!A:A, FILTER(Log!J:J, Log!I:I="Math", Log!N:N=TODAY()), 0)))
+//
+// Reading: same pattern with 'Reading Dashboard'! and Log!I:I="Reading".
 
 /** Expected dashboard headers (row 1). Status values: Not Sent, Issue, Sent. */
 const DASHBOARD_HEADERS = ['LoginID', 'Name', 'Trigger #', 'Email', 'Status', 'Notes'];
