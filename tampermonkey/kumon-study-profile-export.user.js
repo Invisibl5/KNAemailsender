@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kumon - Study Profile Export (CSV)
 // @namespace    kumon-automation
-// @version      2.0
-// @description  Export students + study profile. Adds batch fetch: lowest page ever assigned (min WorksheetNOFrom) per student+subject. Adds debug copy + auto-pagination for GetCenterAllStudentList (fix 100-student cap).
+// @version      2.1
+// @description  Export students + study profile. Batch fetch lowest PLANNED (uncompleted) page (min WorksheetNOFrom) per student+subject. Includes debug copy + auto-pagination for GetCenterAllStudentList (fix 100-student cap).
 // @author       You
 // @match        https://class-navi.digital.kumon.com/*
 // @match        https://instructor2.digital.kumon.com/*
@@ -364,9 +364,11 @@
     return { completed: completed, planned: planned };
   }
 
-  /** Compute the lowest page range ever present in StudyUnitInfoList (min WorksheetNOFrom). */
+  /** Compute the lowest page range in PLANNED (uncompleted) StudyUnitInfoList (min WorksheetNOFrom). */
   function computeLowestPages(studyResult) {
     var list = (studyResult && studyResult.StudyUnitInfoList) ? studyResult.StudyUnitInfoList : [];
+    // Only planned/uncompleted work (ignore history)
+    list = splitCompletedAndPlanned(list).planned || [];
     var minFrom = null;
     var minTo = null;
     var minRow = null;
@@ -669,7 +671,7 @@
 
   function generateLowestPagesCSV() {
     if (!allLowestPagesData.entries || allLowestPagesData.entries.length === 0) return '';
-    var rows = ['StudentID\tFullName\tSubject\tLevel\tLowestFrom\tLowestTo\tLowestIndex'];
+    var rows = ['StudentID\tFullName\tSubject\tLevel\tLowestPlannedFrom\tLowestPlannedTo\tLowestPlannedIndex'];
     allLowestPagesData.entries.forEach(function(e) {
       rows.push([e.studentId, e.fullName, e.subject, e.level, e.lowestFrom, e.lowestTo, e.lowestIndex].join('\t'));
     });
