@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.24';
+const VERSION = '1.0.25';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -374,21 +374,25 @@ function loadToWorkArea() {
     }
     const loggedTodayBySubject = { Math: {}, Reading: {} };
     const issueRowsBySubject = { Math: [], Reading: [] };
+    const allIssueLoginIdsBySubject = { Math: {}, Reading: {} };
     for (let r = 0; r < logData.length; r++) {
       const row = logData[r];
       const subj = String(row[0] || '').trim();
       if (subj !== 'Math' && subj !== 'Reading') continue;
+      const loginId = String(row[1] || '');
+      allIssueLoginIdsBySubject[subj][loginId] = true;
+      issueRowsBySubject[subj].push({
+        loginId: loginId,
+        name: String(row[2] || ''),
+        triggerNum: row[3] != null ? row[3] : '',
+        note: String(row[4] || '')
+      });
       const d = row[5];
-      if (d == null) continue;
-      const t = (d && d.getTime) ? d.getTime() : (typeof d === 'number' ? d : 0);
-      if (Math.floor(t / 86400000) === todayDay) {
-        loggedTodayBySubject[subj][String(row[1])] = true;
-        issueRowsBySubject[subj].push({
-          loginId: String(row[1] || ''),
-          name: String(row[2] || ''),
-          triggerNum: row[3] != null ? row[3] : '',
-          note: String(row[4] || '')
-        });
+      if (d != null) {
+        const t = (d && d.getTime) ? d.getTime() : (typeof d === 'number' ? d : 0);
+        if (Math.floor(t / 86400000) === todayDay) {
+          loggedTodayBySubject[subj][loginId] = true;
+        }
       }
     }
     debugLog('Load', 'Log parsed', { mathIssues: issueRowsBySubject.Math.length, readingIssues: issueRowsBySubject.Reading.length });
@@ -398,12 +402,12 @@ function loadToWorkArea() {
 
     const mathSheet = ss.getSheetByName('Math Dashboard') || findSheetByName(ss, 'math', 'dashboard');
     if (mathSheet) {
-      mathCount = loadOneDashboard(mathSheet, loggedTodayBySubject.Math || {}, issueRowsBySubject.Math || [], 500);
+      mathCount = loadOneDashboard(mathSheet, loggedTodayBySubject.Math || {}, issueRowsBySubject.Math || [], allIssueLoginIdsBySubject.Math || {}, 500);
     }
 
     const readingSheet = ss.getSheetByName('Reading Dashboard') || findSheetByName(ss, 'reading', 'dashboard');
     if (readingSheet) {
-      readingCount = loadOneDashboard(readingSheet, loggedTodayBySubject.Reading || {}, issueRowsBySubject.Reading || [], 500);
+      readingCount = loadOneDashboard(readingSheet, loggedTodayBySubject.Reading || {}, issueRowsBySubject.Reading || [], allIssueLoginIdsBySubject.Reading || {}, 500);
     }
 
     SpreadsheetApp.getUi().alert(
@@ -439,11 +443,10 @@ function debugLog(context, message, detail) {
   Logger.log('[KNA ' + context + '] ' + message + d);
 }
 
-function loadOneDashboard(sheet, loggedTodayIds, issueRowsFromLog, clearMaxRows) {
+function loadOneDashboard(sheet, loggedTodayIds, issueRowsFromLog, allIssueLoginIds, clearMaxRows) {
   const sheetName = sheet.getName();
   debugLog('Load', 'loadOneDashboard start', { sheet: sheetName });
   const lastRow = sheet.getLastRow();
-  // Keep existing work area (I:N) as leftover — read only 6 columns. getRange(row, col, numRows, numCols)
   const numExistingRows = lastRow >= WORK_AREA_START_ROW ? Math.min(lastRow - WORK_AREA_START_ROW + 1, clearMaxRows) : 0;
   const existingRange = numExistingRows > 0
     ? sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, numExistingRows, WORK_AREA_COLS).getValues()
@@ -463,7 +466,9 @@ function loadOneDashboard(sheet, loggedTodayIds, issueRowsFromLog, clearMaxRows)
   for (let r = 0; r < data.length; r++) {
     const row = data[r];
     if (String((row[4] || '')).trim().toLowerCase() !== 'send email') continue;
-    if (loggedTodayIds[String(row[0] || '')]) continue;
+    const id = String(row[0] || '');
+    if (loggedTodayIds[id]) continue;
+    if (allIssueLoginIds && allIssueLoginIds[id]) continue; // don't show in SEND EMAIL if they're in the Issue log (any date)
     out.push([row[0], row[1], row[5], row[6], 'Not Sent', '']);
   }
   const merged = leftover.slice();
