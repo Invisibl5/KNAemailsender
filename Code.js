@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.25';
+const VERSION = '1.0.26';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -375,10 +375,12 @@ function loadToWorkArea() {
     const loggedTodayBySubject = { Math: {}, Reading: {} };
     const issueRowsBySubject = { Math: [], Reading: [] };
     const allIssueLoginIdsBySubject = { Math: {}, Reading: {} };
+    const logIssueSheetRowsToDelete = []; // 1-based row numbers in Log to remove after moving Issue rows to dashboards
     for (let r = 0; r < logData.length; r++) {
       const row = logData[r];
       const subj = String(row[0] || '').trim();
       if (subj !== 'Math' && subj !== 'Reading') continue;
+      logIssueSheetRowsToDelete.push(2 + r);
       const loginId = String(row[1] || '');
       allIssueLoginIdsBySubject[subj][loginId] = true;
       issueRowsBySubject[subj].push({
@@ -395,7 +397,7 @@ function loadToWorkArea() {
         }
       }
     }
-    debugLog('Load', 'Log parsed', { mathIssues: issueRowsBySubject.Math.length, readingIssues: issueRowsBySubject.Reading.length });
+    debugLog('Load', 'Log parsed', { mathIssues: issueRowsBySubject.Math.length, readingIssues: issueRowsBySubject.Reading.length, rowsToRemoveFromLog: logIssueSheetRowsToDelete.length });
 
     let mathCount = 0;
     let readingCount = 0;
@@ -408,6 +410,14 @@ function loadToWorkArea() {
     const readingSheet = ss.getSheetByName('Reading Dashboard') || findSheetByName(ss, 'reading', 'dashboard');
     if (readingSheet) {
       readingCount = loadOneDashboard(readingSheet, loggedTodayBySubject.Reading || {}, issueRowsBySubject.Reading || [], allIssueLoginIdsBySubject.Reading || {}, 500);
+    }
+
+    if (logIssueSheetRowsToDelete.length > 0) {
+      const sorted = logIssueSheetRowsToDelete.slice().sort(function (a, b) { return b - a; });
+      for (let d = 0; d < sorted.length; d++) {
+        logSheet.deleteRow(sorted[d]);
+      }
+      debugLog('Load', 'Removed Issue rows from Log', { count: sorted.length });
     }
 
     SpreadsheetApp.getUi().alert(
@@ -462,13 +472,23 @@ function loadOneDashboard(sheet, loggedTodayIds, issueRowsFromLog, allIssueLogin
     existingIds[id] = true;
   }
   const data = lastRow >= 3 ? sheet.getRange(3, 1, lastRow, 7).getValues() : [];
+  const headerRow = lastRow >= 2 ? sheet.getRange(2, 1, 2, Math.max(sheet.getLastColumn(), 7)).getValues()[0] : [];
+  const col = getColumnIndices(headerRow);
+  const emailByLoginId = {};
+  if (col.email && col.email >= 1 && col.email <= 7) {
+    for (let r = 0; r < data.length; r++) {
+      const row = data[r];
+      const id = String(row[0] || '').trim();
+      if (id) emailByLoginId[id] = row[col.email - 1] != null ? String(row[col.email - 1]) : '';
+    }
+  }
   const out = [];
   for (let r = 0; r < data.length; r++) {
     const row = data[r];
     if (String((row[4] || '')).trim().toLowerCase() !== 'send email') continue;
     const id = String(row[0] || '');
     if (loggedTodayIds[id]) continue;
-    if (allIssueLoginIds && allIssueLoginIds[id]) continue; // don't show in SEND EMAIL if they're in the Issue log (any date)
+    if (allIssueLoginIds && allIssueLoginIds[id]) continue;
     out.push([row[0], row[1], row[5], row[6], 'Not Sent', '']);
   }
   const merged = leftover.slice();
@@ -480,7 +500,8 @@ function loadOneDashboard(sheet, loggedTodayIds, issueRowsFromLog, allIssueLogin
     const x = issueRowsFromLog[i];
     if (!x || !x.loginId || addedIds[x.loginId]) continue;
     addedIds[x.loginId] = true;
-    merged.push([x.loginId, x.name, '', x.triggerNum, 'Issue', x.note || '']);
+    const email = (emailByLoginId[x.loginId] != null) ? emailByLoginId[x.loginId] : '';
+    merged.push([x.loginId, x.name, email, x.triggerNum, 'Issue', x.note || '']);
   }
   for (let i = 0; i < out.length; i++) {
     const row = out[i];
