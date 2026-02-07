@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.23';
+const VERSION = '1.0.24';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -192,25 +192,27 @@ const DASHBOARD_HEADERS = ['LoginID', 'Name', 'Trigger #', 'Email', 'Status', 'N
  * - "Sent": appends LoginID, Name, Trigger # to Log columns A–C (Math) or E–G (Reading).
  */
 function syncDashboardToLog() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getActiveSheet();
-  const name = sheet.getName();
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getActiveSheet();
+    const name = sheet.getName();
+    debugLog('Move', 'syncDashboardToLog start', { sheet: name });
 
-  const isMath = name.toLowerCase().indexOf('math') !== -1;
-  const isReading = name.toLowerCase().indexOf('reading') !== -1;
-  const isDashboard = name.toLowerCase().indexOf('dashboard') !== -1;
+    const isMath = name.toLowerCase().indexOf('math') !== -1;
+    const isReading = name.toLowerCase().indexOf('reading') !== -1;
+    const isDashboard = name.toLowerCase().indexOf('dashboard') !== -1;
 
-  if (!isDashboard || (!isMath && !isReading)) {
-    SpreadsheetApp.getUi().alert(
-      'Wrong sheet',
-      'Please run this from "Math Dashboard" or "Reading Dashboard".',
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-    return;
-  }
+    if (!isDashboard || (!isMath && !isReading)) {
+      SpreadsheetApp.getUi().alert(
+        'Wrong sheet',
+        'Please run this from "Math Dashboard" or "Reading Dashboard".',
+        SpreadsheetApp.getUi().ButtonSet.OK
+      );
+      return;
+    }
 
-  const subject = isMath ? 'Math' : 'Reading';
-  let logSheet = ss.getSheetByName('Log');
+    const subject = isMath ? 'Math' : 'Reading';
+    let logSheet = ss.getSheetByName('Log');
   if (!logSheet) {
     logSheet = ss.insertSheet('Log');
     // Set headers for Log (A–C Math Sent, E–G Reading Sent, I–N Issue). getRange(row, col, numRows, numCols)
@@ -325,13 +327,19 @@ function syncDashboardToLog() {
     }
   }
 
-  const msg = [
-    subject + ' Dashboard → Log',
-    'Sent: ' + (isMath ? sentMathRows.length : sentReadingRows.length),
-    'Issues: ' + issueRows.length,
-    rowsToDelete.length > 0 ? 'Rows removed from sheet.' : ''
-  ].join('\n');
-  SpreadsheetApp.getUi().alert('Move complete', msg, SpreadsheetApp.getUi().ButtonSet.OK);
+    const msg = [
+      subject + ' Dashboard → Log',
+      'Sent: ' + (isMath ? sentMathRows.length : sentReadingRows.length),
+      'Issues: ' + issueRows.length,
+      rowsToDelete.length > 0 ? 'Rows removed from sheet.' : ''
+    ].join('\n');
+    debugLog('Move', 'complete', { sheet: name, sent: isMath ? sentMathRows.length : sentReadingRows.length, issues: issueRows.length });
+    SpreadsheetApp.getUi().alert('Move complete', msg, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) {
+    debugLog('Move', 'ERROR', { message: e.message, stack: e.stack });
+    SpreadsheetApp.getUi().alert('Move error', e.message + '\n\nCheck View > Logs (Execution log) for details.', SpreadsheetApp.getUi().ButtonSet.OK);
+    throw e;
+  }
 }
 
 /**
@@ -339,67 +347,75 @@ function syncDashboardToLog() {
  * and writes the result as values into each sheet's I:L. Works from any sheet.
  */
 function loadToWorkArea() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const logSheet = ss.getSheetByName('Log');
-  if (!logSheet) {
-    SpreadsheetApp.getUi().alert('No Log sheet', 'Create a Log sheet first (run Move once to create it).', SpreadsheetApp.getUi().ButtonSet.OK);
-    return;
-  }
-
-  // Today in spreadsheet timezone
-  const todayCell = logSheet.getRange(1, 20);
-  todayCell.setFormula('=TODAY()');
-  SpreadsheetApp.flush();
-  const today = todayCell.getValue();
-  todayCell.clearContent();
-
-  const todayT = (today && today.getTime) ? today.getTime() : (typeof today === 'number' ? today : 0);
-  const todayDay = Math.floor(todayT / 86400000);
-
-  // Build logged-today LoginIDs per subject and Issue rows to restore (Log I:N = Subject, LoginID, Name, Trigger #, Note, Date)
-  const logLastRow = Math.max(logSheet.getLastRow(), 1);
-  const logData = logSheet.getRange(2, 9, logLastRow, 14).getValues(); // I:N
-  const loggedTodayBySubject = { Math: {}, Reading: {} };
-  const issueRowsBySubject = { Math: [], Reading: [] };
-  for (let r = 0; r < logData.length; r++) {
-    const row = logData[r];
-    const subj = String(row[0] || '').trim();
-    if (subj !== 'Math' && subj !== 'Reading') continue;
-    const d = row[5];
-    if (d == null) continue;
-    const t = (d && d.getTime) ? d.getTime() : (typeof d === 'number' ? d : 0);
-    if (Math.floor(t / 86400000) === todayDay) {
-      loggedTodayBySubject[subj][String(row[1])] = true;
-      // Issue rows to restore: bring back LoginID, Name, Trigger #, Note so user can re-edit and send or move again
-      issueRowsBySubject[subj].push({
-        loginId: String(row[1] || ''),
-        name: String(row[2] || ''),
-        triggerNum: row[3] != null ? row[3] : '',
-        note: String(row[4] || '')
-      });
+  try {
+    debugLog('Load', 'loadToWorkArea start');
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const logSheet = ss.getSheetByName('Log');
+    if (!logSheet) {
+      SpreadsheetApp.getUi().alert('No Log sheet', 'Create a Log sheet first (run Move once to create it).', SpreadsheetApp.getUi().ButtonSet.OK);
+      return;
     }
+
+    const todayCell = logSheet.getRange(1, 20);
+    todayCell.setFormula('=TODAY()');
+    SpreadsheetApp.flush();
+    const today = todayCell.getValue();
+    todayCell.clearContent();
+
+    const todayT = (today && today.getTime) ? today.getTime() : (typeof today === 'number' ? today : 0);
+    const todayDay = Math.floor(todayT / 86400000);
+    debugLog('Load', 'today', { todayDay: todayDay });
+
+    const logLastRow = Math.max(logSheet.getLastRow(), 1);
+    const logNumRows = Math.max(logLastRow - 1, 0);
+    const logData = logNumRows > 0 ? logSheet.getRange(2, 9, logNumRows, 6).getValues() : []; // I:N = 6 cols (getRange row, col, numRows, numCols)
+    if (logData.length > 0 && logData[0].length !== 6) {
+      debugLog('Load', 'Log I:N column count', { rows: logData.length, cols: logData[0].length, expected: 6 });
+    }
+    const loggedTodayBySubject = { Math: {}, Reading: {} };
+    const issueRowsBySubject = { Math: [], Reading: [] };
+    for (let r = 0; r < logData.length; r++) {
+      const row = logData[r];
+      const subj = String(row[0] || '').trim();
+      if (subj !== 'Math' && subj !== 'Reading') continue;
+      const d = row[5];
+      if (d == null) continue;
+      const t = (d && d.getTime) ? d.getTime() : (typeof d === 'number' ? d : 0);
+      if (Math.floor(t / 86400000) === todayDay) {
+        loggedTodayBySubject[subj][String(row[1])] = true;
+        issueRowsBySubject[subj].push({
+          loginId: String(row[1] || ''),
+          name: String(row[2] || ''),
+          triggerNum: row[3] != null ? row[3] : '',
+          note: String(row[4] || '')
+        });
+      }
+    }
+    debugLog('Load', 'Log parsed', { mathIssues: issueRowsBySubject.Math.length, readingIssues: issueRowsBySubject.Reading.length });
+
+    let mathCount = 0;
+    let readingCount = 0;
+
+    const mathSheet = ss.getSheetByName('Math Dashboard') || findSheetByName(ss, 'math', 'dashboard');
+    if (mathSheet) {
+      mathCount = loadOneDashboard(mathSheet, loggedTodayBySubject.Math || {}, issueRowsBySubject.Math || [], 500);
+    }
+
+    const readingSheet = ss.getSheetByName('Reading Dashboard') || findSheetByName(ss, 'reading', 'dashboard');
+    if (readingSheet) {
+      readingCount = loadOneDashboard(readingSheet, loggedTodayBySubject.Reading || {}, issueRowsBySubject.Reading || [], 500);
+    }
+
+    SpreadsheetApp.getUi().alert(
+      'Load complete',
+      'Math: ' + mathCount + ' rows\nReading: ' + readingCount + ' rows\nIssue rows from the Log are restored with Status=Issue and Notes. Edit and send to Sent or Move back to Log.',
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  } catch (e) {
+    debugLog('Load', 'ERROR', { message: e.message, stack: e.stack });
+    SpreadsheetApp.getUi().alert('Load error', e.message + '\n\nCheck View > Logs (Execution log) for details.', SpreadsheetApp.getUi().ButtonSet.OK);
+    throw e;
   }
-
-  let mathCount = 0;
-  let readingCount = 0;
-
-  // Load Math Dashboard
-  const mathSheet = ss.getSheetByName('Math Dashboard') || findSheetByName(ss, 'math', 'dashboard');
-  if (mathSheet) {
-    mathCount = loadOneDashboard(mathSheet, loggedTodayBySubject.Math || {}, issueRowsBySubject.Math || [], 500);
-  }
-
-  // Load Reading Dashboard
-  const readingSheet = ss.getSheetByName('Reading Dashboard') || findSheetByName(ss, 'reading', 'dashboard');
-  if (readingSheet) {
-    readingCount = loadOneDashboard(readingSheet, loggedTodayBySubject.Reading || {}, issueRowsBySubject.Reading || [], 500);
-  }
-
-  SpreadsheetApp.getUi().alert(
-    'Load complete',
-    'Math: ' + mathCount + ' rows\nReading: ' + readingCount + ' rows\nIssue rows from the Log are restored with Status=Issue and Notes. Edit and send to Sent or Move back to Log.',
-    SpreadsheetApp.getUi().ButtonSet.OK
-  );
 }
 
 function findSheetByName(ss, word1, word2) {
@@ -413,49 +429,70 @@ function findSheetByName(ss, word1, word2) {
   return null;
 }
 
+// Work area I:N = 6 columns (LoginID, Name, col3, Trigger#, Status, Notes)
+const WORK_AREA_COLS = 6;
+const WORK_AREA_START_ROW = 3;
+const WORK_AREA_START_COL = 9; // I
+
+function debugLog(context, message, detail) {
+  const d = detail != null ? ' | ' + JSON.stringify(detail) : '';
+  Logger.log('[KNA ' + context + '] ' + message + d);
+}
+
 function loadOneDashboard(sheet, loggedTodayIds, issueRowsFromLog, clearMaxRows) {
+  const sheetName = sheet.getName();
+  debugLog('Load', 'loadOneDashboard start', { sheet: sheetName });
   const lastRow = sheet.getLastRow();
-  // Keep existing work area (I:N) as leftover unsent; then append new rows (no duplicate LoginID).
-  const existingRange = lastRow >= 3 ? sheet.getRange(3, 9, Math.min(lastRow, 2 + clearMaxRows), 14).getValues() : [];
+  // Keep existing work area (I:N) as leftover — read only 6 columns. getRange(row, col, numRows, numCols)
+  const numExistingRows = lastRow >= WORK_AREA_START_ROW ? Math.min(lastRow - WORK_AREA_START_ROW + 1, clearMaxRows) : 0;
+  const existingRange = numExistingRows > 0
+    ? sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, numExistingRows, WORK_AREA_COLS).getValues()
+    : [];
+  debugLog('Load', 'existing work area read', { sheet: sheetName, rows: existingRange.length, cols: existingRange[0] ? existingRange[0].length : 0 });
   const leftover = [];
   const existingIds = {};
   for (let r = 0; r < existingRange.length; r++) {
     const row = existingRange[r];
     const id = String(row[0] || '').trim();
     if (!id) continue;
-    leftover.push(row);
+    leftover.push(row.slice(0, WORK_AREA_COLS));
     existingIds[id] = true;
   }
-  const data = lastRow >= 3 ? sheet.getRange(3, 1, lastRow, 7).getValues() : []; // A:G from row 3
+  const data = lastRow >= 3 ? sheet.getRange(3, 1, lastRow, 7).getValues() : [];
   const out = [];
   for (let r = 0; r < data.length; r++) {
     const row = data[r];
     if (String((row[4] || '')).trim().toLowerCase() !== 'send email') continue;
     if (loggedTodayIds[String(row[0] || '')]) continue;
-    out.push([row[0], row[1], row[5], row[6], 'Not Sent', '']); // I:L + M + N
+    out.push([row[0], row[1], row[5], row[6], 'Not Sent', '']);
   }
   const merged = leftover.slice();
   const addedIds = {};
   for (let i = 0; i < leftover.length; i++) {
     addedIds[String(leftover[i][0] || '')] = true;
   }
-  // Append: Issue rows from Log (if not already in work area)
   for (let i = 0; i < (issueRowsFromLog || []).length; i++) {
     const x = issueRowsFromLog[i];
     if (!x || !x.loginId || addedIds[x.loginId]) continue;
     addedIds[x.loginId] = true;
     merged.push([x.loginId, x.name, '', x.triggerNum, 'Issue', x.note || '']);
   }
-  // Append: dashboard SEND EMAIL rows (if not already in work area)
   for (let i = 0; i < out.length; i++) {
     const row = out[i];
     if (addedIds[row[0]]) continue;
     merged.push(row);
   }
+  debugLog('Load', 'merge counts', { sheet: sheetName, leftover: leftover.length, issue: (issueRowsFromLog || []).length, fromDashboard: out.length, merged: merged.length });
   if (merged.length > 0) {
+    const cols = merged[0].length;
+    if (cols !== WORK_AREA_COLS) {
+      debugLog('Load', 'ERROR: merged row column count mismatch', { sheet: sheetName, mergedRows: merged.length, mergedCols: cols, expected: WORK_AREA_COLS });
+      throw new Error('Load [' + sheetName + ']: data has ' + cols + ' columns but work area expects ' + WORK_AREA_COLS + '. merged.length=' + merged.length + '. Check leftover and new rows have exactly 6 cells each.');
+    }
     const endRow = Math.max(lastRow, 2 + clearMaxRows);
-    sheet.getRange(3, 9, endRow, 6).clearContent(); // numRows, numCols (I:N = 6)
-    sheet.getRange(3, 9, merged.length, 6).setValues(merged);
+    sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, endRow, WORK_AREA_COLS).clearContent();
+    sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, merged.length, WORK_AREA_COLS).setValues(merged);
+    debugLog('Load', 'write done', { sheet: sheetName, rows: merged.length, cols: WORK_AREA_COLS });
   }
   return merged.length;
 }
