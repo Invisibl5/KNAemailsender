@@ -5,15 +5,10 @@ globs: Code.js, **/*.js
 
 # KNA Email Sender – version and commit
 
-When you change code in this project:
+**Every change:** bump the version, then commit and push. No exceptions.
 
 1. **Bump the version**  
-   Update the `VERSION` constant in `Code.js` (e.g. `1.0.2` → `1.0.3`). Use the comment above it as a reminder.
+   Every time you edit the project, update the `VERSION` constant in `Code.js` (e.g. `1.0.31` → `1.0.32`). Do this even if the edit is small.
 
-2. **Commit and push**  
-   After edits, always commit the changes and push to `main` so GitHub Actions can sync to Apps Script.
-
-Example:
-- Edit `Code.js` (and/or other files).
-- In `Code.js`, set `const VERSION = '1.0.X';` to the next version.
-- Run: `git add . && git commit -m "Brief description" && git push origin main`
+2. **Always commit and push**  
+   After edits, always run: `git add . && git commit -m "Description" && git push origin main`. Never leave changes uncommitted or only committed without push.
