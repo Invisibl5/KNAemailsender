@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.28';
+const VERSION = '1.0.29';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -342,9 +342,51 @@ function syncDashboardToLog() {
   }
 }
 
+// Log Issue columns: I=Subject, J=LoginID, K=Name, L=Trigger #, M=Note, N=Date
+const LOG_ISSUE_START_COL = 9;
+const LOG_ISSUE_NUM_COLS = 6;
+
 /**
- * Load: runs the filter (E=SEND EMAIL, not logged today) for both Math and Reading dashboards
- * and writes the result as values into each sheet's I:L. Works from any sheet.
+ * Looks up Email for a student by LoginID from Math Data or Reading Data sheet.
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss
+ * @param {string} subject - "Math" or "Reading"
+ * @param {string} loginId
+ * @returns {string}
+ */
+function getEmailFromDataSheet(ss, subject, loginId) {
+  const sheetName = subject === 'Math' ? 'Math Data' : 'Reading Data';
+  const sheet = ss.getSheetByName(sheetName) || findSheetByName(ss, subject.toLowerCase(), 'data');
+  if (!sheet || sheet.getLastRow() < 2) return '';
+  const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  let col = getColumnIndices(headerRow);
+  if (!col.loginId) {
+    for (let c = 0; c < headerRow.length; c++) {
+      const h = String(headerRow[c] || '').trim().toLowerCase().replace(/\s+/g, '');
+      if (h === 'loginid') { col.loginId = c + 1; break; }
+    }
+  }
+  if (!col.email) {
+    for (let c = 0; c < headerRow.length; c++) {
+      const h = String(headerRow[c] || '').trim().toLowerCase();
+      if (h === 'email') { col.email = c + 1; break; }
+    }
+  }
+  if (!col.loginId || !col.email) return '';
+  const data = sheet.getRange(2, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+  const idStr = String(loginId).trim();
+  for (let r = 0; r < data.length; r++) {
+    const row = data[r];
+    if (String(row[col.loginId - 1] != null ? row[col.loginId - 1] : '').trim() === idStr) {
+      return row[col.email - 1] != null ? String(row[col.email - 1]) : '';
+    }
+  }
+  return '';
+}
+
+/**
+ * Load: runs the filter (E=SEND EMAIL, not logged today) for both Math and Reading dashboards,
+ * PLUS brings back Issue log entries (Status=Issue, Note) with email lookup.
+ * Move sends to log; Load brings from log. Removes brought-back entries from Issue log and compacts.
  */
 function loadToWorkArea() {
   try {
@@ -356,24 +398,18 @@ function loadToWorkArea() {
       return;
     }
 
-    const todayCell = logSheet.getRange(1, 20);
-    todayCell.setFormula('=TODAY()');
-    SpreadsheetApp.flush();
-    const today = todayCell.getValue();
-    todayCell.clearContent();
-
-    const todayT = (today && today.getTime) ? today.getTime() : (typeof today === 'number' ? today : 0);
-    const todayDay = Math.floor(todayT / 86400000);
-    debugLog('Load', 'today', { todayDay: todayDay });
-
     const logLastRow = Math.max(logSheet.getLastRow(), 1);
     const logNumRows = Math.max(logLastRow - 1, 0);
-    const logData = logNumRows > 0 ? logSheet.getRange(2, 9, logNumRows, 6).getValues() : []; // I:N = 6 cols (getRange row, col, numRows, numCols)
-    if (logData.length > 0 && logData[0].length !== 6) {
-      debugLog('Load', 'Log I:N column count', { rows: logData.length, cols: logData[0].length, expected: 6 });
+    const logData = logNumRows > 0 ? logSheet.getRange(2, LOG_ISSUE_START_COL, logNumRows, LOG_ISSUE_NUM_COLS).getValues() : [];
+    if (logData.length > 0 && logData[0].length !== LOG_ISSUE_NUM_COLS) {
+      debugLog('Load', 'Log I:N column count', { rows: logData.length, cols: logData[0].length, expected: LOG_ISSUE_NUM_COLS });
     }
-    const loggedTodayBySubject = { Math: {}, Reading: {} };
-    const issueNoteByLoginIdBySubject = { Math: {}, Reading: {} };
+
+    // Parse Issue log: Subject, LoginID, Name, Trigger #, Note, Date (I-N)
+    // issueNoteByLoginIdAndTrigger[subject][loginId][triggerNum] = note (for dashboard rows that are in log)
+    // issueEntriesBySubject[subject] = [{loginId, name, triggerNum, note, sheetRow}]
+    const issueNoteByLoginIdAndTrigger = { Math: {}, Reading: {} };
+    const issueEntriesBySubject = { Math: [], Reading: [] };
     for (let r = 0; r < logData.length; r++) {
       const row = logData[r];
       const subjRaw = String(row[0] || '').trim();
@@ -381,33 +417,45 @@ function loadToWorkArea() {
       if (!subj) continue;
       const loginId = String(row[1] != null ? row[1] : '').trim();
       if (!loginId) continue;
-      issueNoteByLoginIdBySubject[subj][loginId] = String(row[4] || '');
-      const d = row[5];
-      if (d != null) {
-        const t = (d && d.getTime) ? d.getTime() : (typeof d === 'number' ? d : 0);
-        if (Math.floor(t / 86400000) === todayDay) {
-          loggedTodayBySubject[subj][loginId] = true;
-        }
+      const triggerNum = row[3];
+      const note = String(row[4] || '');
+      const sheetRow = 2 + r;
+      if (!issueNoteByLoginIdAndTrigger[subj][loginId]) {
+        issueNoteByLoginIdAndTrigger[subj][loginId] = {};
       }
+      issueNoteByLoginIdAndTrigger[subj][loginId][normalizeTrigger(triggerNum)] = note;
+      issueEntriesBySubject[subj].push({ loginId: loginId, name: row[2], triggerNum: triggerNum, note: note, sheetRow: sheetRow });
     }
-    debugLog('Load', 'Log parsed', { mathIssueNotes: Object.keys(issueNoteByLoginIdBySubject.Math || {}).length, readingIssueNotes: Object.keys(issueNoteByLoginIdBySubject.Reading || {}).length });
+    debugLog('Load', 'Log parsed', {
+      mathIssues: issueEntriesBySubject.Math.length,
+      readingIssues: issueEntriesBySubject.Reading.length
+    });
+
+    // Don't exclude logged-today: Move sends to log, Load brings from log (including today)
+    const loggedTodayIds = { Math: {}, Reading: {} };
+
+    const broughtBackKeys = []; // {subject, loginId, triggerNum} for compacting Log
 
     let mathCount = 0;
     let readingCount = 0;
 
     const mathSheet = ss.getSheetByName('Math Dashboard') || findSheetByName(ss, 'math', 'dashboard');
     if (mathSheet) {
-      mathCount = loadOneDashboard(mathSheet, loggedTodayBySubject.Math || {}, issueNoteByLoginIdBySubject.Math || {}, 500);
+      mathCount = loadOneDashboard(mathSheet, loggedTodayIds.Math, issueNoteByLoginIdAndTrigger.Math, issueEntriesBySubject.Math, ss, 'Math', broughtBackKeys, 500);
     }
 
     const readingSheet = ss.getSheetByName('Reading Dashboard') || findSheetByName(ss, 'reading', 'dashboard');
     if (readingSheet) {
-      readingCount = loadOneDashboard(readingSheet, loggedTodayBySubject.Reading || {}, issueNoteByLoginIdBySubject.Reading || {}, 500);
+      readingCount = loadOneDashboard(readingSheet, loggedTodayIds.Reading, issueNoteByLoginIdAndTrigger.Reading, issueEntriesBySubject.Reading, ss, 'Reading', broughtBackKeys, 500);
+    }
+
+    if (broughtBackKeys.length > 0) {
+      compactIssueLog(logSheet, broughtBackKeys, logData);
     }
 
     SpreadsheetApp.getUi().alert(
       'Load complete',
-      'Math: ' + mathCount + ' rows\nReading: ' + readingCount + ' rows\nFilter: SEND EMAIL, not logged today. Issue status and notes applied from Log when applicable.',
+      'Math: ' + mathCount + ' rows\nReading: ' + readingCount + ' rows\nFilter: SEND EMAIL + Issue log (brought back). Brought ' + broughtBackKeys.length + ' from Issue log.',
       SpreadsheetApp.getUi().ButtonSet.OK
     );
   } catch (e) {
@@ -415,6 +463,48 @@ function loadToWorkArea() {
     SpreadsheetApp.getUi().alert('Load error', e.message + '\n\nCheck View > Logs (Execution log) for details.', SpreadsheetApp.getUi().ButtonSet.OK);
     throw e;
   }
+}
+
+/** Normalize trigger for comparison (string or number). */
+function normalizeTrigger(t) {
+  if (t == null) return '';
+  return String(t).trim();
+}
+
+/**
+ * Removes Issue log entries that were brought back to dashboards, then compacts I-N by shifting rows up.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} logSheet
+ * @param {Array<{subject: string, loginId: string, triggerNum: *}>} keysToRemove
+ * @param {Array<Array>} logData - full I:N data (from row 2)
+ */
+function compactIssueLog(logSheet, keysToRemove, logData) {
+  const removeSet = {};
+  for (let i = 0; i < keysToRemove.length; i++) {
+    const k = keysToRemove[i];
+    const key = k.subject + '|' + String(k.loginId).trim() + '|' + normalizeTrigger(k.triggerNum);
+    removeSet[key] = true;
+  }
+  const remaining = [];
+  for (let r = 0; r < logData.length; r++) {
+    const row = logData[r];
+    const subjRaw = String(row[0] || '').trim();
+    const subj = subjRaw.toLowerCase() === 'math' ? 'Math' : (subjRaw.toLowerCase() === 'reading' ? 'Reading' : null);
+    if (!subj) continue;
+    const loginId = String(row[1] != null ? row[1] : '').trim();
+    if (!loginId) continue;
+    const triggerNum = row[3];
+    const key = subj + '|' + loginId + '|' + normalizeTrigger(triggerNum);
+    if (removeSet[key]) continue;
+    remaining.push(row);
+  }
+  const firstRow = 2;
+  const lastRow = firstRow + logData.length - 1;
+  if (lastRow < firstRow) return;
+  logSheet.getRange(firstRow, LOG_ISSUE_START_COL, lastRow, LOG_ISSUE_START_COL + LOG_ISSUE_NUM_COLS - 1).clearContent();
+  if (remaining.length > 0) {
+    logSheet.getRange(firstRow, LOG_ISSUE_START_COL, remaining.length, LOG_ISSUE_NUM_COLS).setValues(remaining);
+  }
+  debugLog('Load', 'compactIssueLog', { removed: keysToRemove.length, remaining: remaining.length });
 }
 
 function findSheetByName(ss, word1, word2) {
@@ -438,7 +528,7 @@ function debugLog(context, message, detail) {
   Logger.log('[KNA ' + context + '] ' + message + d);
 }
 
-function loadOneDashboard(sheet, loggedTodayIds, issueNoteByLoginId, clearMaxRows) {
+function loadOneDashboard(sheet, loggedTodayIds, issueNoteByLoginIdAndTrigger, issueEntriesFromLog, ss, subject, broughtBackKeys, clearMaxRows) {
   const sheetName = sheet.getName();
   debugLog('Load', 'loadOneDashboard start', { sheet: sheetName });
   const lastRow = sheet.getLastRow();
@@ -448,13 +538,17 @@ function loadOneDashboard(sheet, loggedTodayIds, issueNoteByLoginId, clearMaxRow
     : [];
   debugLog('Load', 'existing work area read', { sheet: sheetName, rows: existingRange.length, cols: existingRange[0] ? existingRange[0].length : 0 });
   const leftover = [];
-  const addedIds = {};
+  const addedKeys = {};
+  function key(loginId, triggerNum) {
+    return String(loginId || '').trim() + '|' + normalizeTrigger(triggerNum);
+  }
   for (let r = 0; r < existingRange.length; r++) {
     const row = existingRange[r];
     const id = String(row[0] || '').trim();
     if (!id) continue;
+    const tr = row[3];
     leftover.push(row.slice(0, WORK_AREA_COLS));
-    addedIds[id] = true;
+    addedKeys[key(id, tr)] = true;
   }
   const data = lastRow >= 3 ? sheet.getRange(3, 1, lastRow, 7).getValues() : [];
   const headerRow = lastRow >= 2 ? sheet.getRange(2, 1, 2, Math.max(sheet.getLastColumn(), 7)).getValues()[0] : [];
@@ -467,21 +561,33 @@ function loadOneDashboard(sheet, loggedTodayIds, issueNoteByLoginId, clearMaxRow
     const id = String(row[0] != null ? row[0] : '').trim();
     if (!id) continue;
     if (loggedTodayIds[id]) continue;
+    const triggerNum = row[6];
     const email = row[emailCol] != null ? String(row[emailCol]) : '';
-    const inIssueLog = issueNoteByLoginId && Object.prototype.hasOwnProperty.call(issueNoteByLoginId, id);
-    const note = inIssueLog ? String(issueNoteByLoginId[id] || '') : '';
-    const status = inIssueLog ? 'Issue' : 'Not Sent';
-    out.push([row[0], row[1], email, row[6], status, note]);
+    const noteMap = issueNoteByLoginIdAndTrigger && issueNoteByLoginIdAndTrigger[id];
+    const note = noteMap && noteMap[normalizeTrigger(triggerNum)] != null ? String(noteMap[normalizeTrigger(triggerNum)]) : '';
+    const status = note ? 'Issue' : 'Not Sent';
+    out.push([row[0], row[1], email, triggerNum, status, note]);
   }
   const merged = leftover.slice();
   for (let i = 0; i < out.length; i++) {
     const row = out[i];
     const rowId = String(row[0] != null ? row[0] : '').trim();
-    if (addedIds[rowId]) continue;
-    addedIds[rowId] = true;
+    const tr = row[3];
+    if (addedKeys[key(rowId, tr)]) continue;
+    addedKeys[key(rowId, tr)] = true;
     merged.push(row);
   }
-  debugLog('Load', 'merge counts', { sheet: sheetName, leftover: leftover.length, fromFilter: out.length, merged: merged.length });
+  for (let i = 0; i < issueEntriesFromLog.length; i++) {
+    const ent = issueEntriesFromLog[i];
+    const id = String(ent.loginId).trim();
+    const tr = ent.triggerNum;
+    if (addedKeys[key(id, tr)]) continue;
+    addedKeys[key(id, tr)] = true;
+    const email = getEmailFromDataSheet(ss, subject, id);
+    merged.push([ent.loginId, ent.name, email, ent.triggerNum, 'Issue', ent.note]);
+    broughtBackKeys.push({ subject: subject, loginId: id, triggerNum: tr });
+  }
+  debugLog('Load', 'merge counts', { sheet: sheetName, leftover: leftover.length, fromFilter: out.length, fromIssueLog: issueEntriesFromLog.length, merged: merged.length });
   if (merged.length > 0) {
     const cols = merged[0].length;
     if (cols !== WORK_AREA_COLS) {
