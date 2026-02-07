@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.29';
+const VERSION = '1.0.30';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -23,6 +23,8 @@ function onOpen() {
     .addSeparator()
     .addItem('Load', 'loadToWorkArea')
     .addItem('Move', 'syncDashboardToLog')
+    .addSeparator()
+    .addItem('Verify from ClassNavi', 'verifyFromClassNavi')
     .addToUi();
 }
 
@@ -640,4 +642,280 @@ function getNextLogRow(logSheet, colA1) {
     }
   }
   return last;
+}
+
+// --- ClassNavi verify (page verification from Kumon API) ---
+const CLASSNAVI_BASE_URL = 'https://instructor2.digital.kumon.com/USA';
+const CLASSNAVI_LOGIN_ID = '404653110035';
+const CLASSNAVI_PASSWORD_HASH = 't4lBET8jlgtti7RBBY2tOMrZJ%2FvY2Nfe3Qgt4eI7FEI%3D';
+const CLASSNAVI_STATUS_CELL_ROW = 1;
+const CLASSNAVI_STATUS_CELL_COL = 20; // T
+const CLASSNAVI_RESULT_START_COL = 16; // P = Level, Q = Lowest From, R = Lowest To, S = Error
+
+function classNaviClientObject(id) {
+  if (id == null) id = Date.now();
+  return {
+    applicationName: 'Class-Navi',
+    version: '1.0.0.0',
+    programName: 'Class-Navi',
+    machineName: '-',
+    os: 'Web',
+    id: String(id)
+  };
+}
+
+function classNaviLogin(loginId, passwordHash) {
+  const usernameEncoded = 'USA%2F' + encodeURIComponent(String(loginId).trim());
+  // Hash from NaviPasswordHash cookie is already URL-encoded; use as-is
+  const body = 'grant_type=password&username=' + usernameEncoded + '&password=' + String(passwordHash).trim();
+  const res = UrlFetchApp.fetch(CLASSNAVI_BASE_URL + '/token', {
+    method: 'post',
+    contentType: 'application/x-www-form-urlencoded',
+    payload: body,
+    muteHttpExceptions: true,
+    headers: {
+      'Accept': 'application/json, text/plain, */*',
+      'Origin': 'https://instructor2.digital.kumon.com',
+      'Referer': 'https://instructor2.digital.kumon.com/USA/'
+    }
+  });
+  const code = res.getResponseCode();
+  const text = res.getContentText();
+  if (code !== 200) {
+    throw new Error('ClassNavi login failed (' + code + '): ' + text.substring(0, 200));
+  }
+  const data = JSON.parse(text);
+  if (!data || !data.access_token) {
+    throw new Error('ClassNavi login: no access_token. Get a fresh hash from NaviPasswordHash cookie.');
+  }
+  return data.access_token;
+}
+
+function classNaviApiCall(token, endpoint, body) {
+  const res = UrlFetchApp.fetch(CLASSNAVI_BASE_URL + endpoint, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(body),
+    muteHttpExceptions: true,
+    headers: { 'Authorization': 'Bearer ' + token }
+  });
+  const code = res.getResponseCode();
+  const text = res.getContentText();
+  if (code !== 200) {
+    throw new Error('ClassNavi API failed (' + code + '): ' + text.substring(0, 300));
+  }
+  const data = JSON.parse(text);
+  if (data.Result && data.Result.ResultCode !== 0) {
+    const errors = (data.Result.Errors || []).map(function (e) { return e.Message || e.ErrorCode; });
+    throw new Error('ClassNavi API error: ' + (errors.join(', ') || 'ResultCode ' + data.Result.ResultCode));
+  }
+  return data;
+}
+
+function classNaviGetInstructorInfo(token, loginId) {
+  return classNaviApiCall(token, '/api/ATX0010P/GetInstructorInfo', {
+    SystemCountryCD: 'USA',
+    LoginID: loginId,
+    client: classNaviClientObject()
+  });
+}
+
+function classNaviExtractStudentList(res) {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+  if (res.CenterAllStudentList && Array.isArray(res.CenterAllStudentList)) return res.CenterAllStudentList;
+  if (res.StudentInfoList && Array.isArray(res.StudentInfoList)) return res.StudentInfoList;
+  if (res.StudentList && Array.isArray(res.StudentList)) return res.StudentList;
+  var first = null;
+  for (var key in res) {
+    if (Array.isArray(res[key])) { first = res[key]; break; }
+  }
+  return first || [];
+}
+
+function classNaviGetAllStudents(token, centerID, instructorID, instructorAssistantSec) {
+  var students = [];
+  var pageSize = 100;
+  var baseBody = {
+    SystemCountryCD: 'USA',
+    CenterID: centerID,
+    InstructorID: instructorID,
+    InstructorAssistantSec: instructorAssistantSec,
+    ValidFlg: '1',
+    client: classNaviClientObject()
+  };
+  var useStartNum = false;
+  var list = classNaviExtractStudentList(classNaviApiCall(token, '/api/ATE0010P/GetCenterAllStudentList', Object.assign({}, baseBody, { Offset: 1, GetNum: pageSize })));
+  if (list.length === 0) {
+    list = classNaviExtractStudentList(classNaviApiCall(token, '/api/ATE0010P/GetCenterAllStudentList', Object.assign({}, baseBody, { StartNum: 1, DispNum: pageSize })));
+    useStartNum = true;
+  }
+  while (list.length > 0) {
+    for (var i = 0; i < list.length; i++) students.push(list[i]);
+    if (list.length < pageSize) break;
+    Utilities.sleep(500);
+    if (useStartNum) {
+      list = classNaviExtractStudentList(classNaviApiCall(token, '/api/ATE0010P/GetCenterAllStudentList', Object.assign({}, baseBody, { StartNum: 1 + students.length, DispNum: pageSize })));
+    } else {
+      list = classNaviExtractStudentList(classNaviApiCall(token, '/api/ATE0010P/GetCenterAllStudentList', Object.assign({}, baseBody, { Offset: 1 + students.length, GetNum: pageSize })));
+    }
+  }
+  return students;
+}
+
+function classNaviGetStudyResult(token, studentID, classID, classStudentSeq, subjectCD, centerID, worksheetCD) {
+  var body = {
+    SystemCountryCD: 'USA',
+    StudentID: studentID,
+    ClassID: classID,
+    ClassStudentSeq: classStudentSeq,
+    SubjectCD: subjectCD,
+    client: classNaviClientObject()
+  };
+  if (centerID) body.CenterID = centerID;
+  if (worksheetCD) body.WorksheetCD = worksheetCD;
+  return classNaviApiCall(token, '/api/ATD0010P/GetStudyResultInfoList', body);
+}
+
+function classNaviComputeLowest(data) {
+  var list = (data && data.StudyUnitInfoList) ? data.StudyUnitInfoList : [];
+  var planned = [];
+  for (var i = 0; i < list.length; i++) {
+    var u = list[i];
+    if (!u || u.StudyStatus === '6') continue;
+    if (u.StudyDate || u.FinishDate) continue;
+    planned.push(u);
+  }
+  var minFrom = null, minTo = null;
+  for (var i = 0; i < planned.length; i++) {
+    var u = planned[i];
+    var from = u.WorksheetNOFrom;
+    if (from == null || from === '') continue;
+    var fromN = Number(from);
+    var toN = (u.WorksheetNOTo != null && u.WorksheetNOTo !== '') ? Number(u.WorksheetNOTo) : null;
+    if (isNaN(fromN)) continue;
+    if (minFrom === null || fromN < minFrom) {
+      minFrom = fromN;
+      minTo = (toN != null && !isNaN(toN)) ? toN : null;
+    }
+  }
+  return { minFrom: minFrom, minTo: minTo };
+}
+
+/**
+ * Verify from ClassNavi: for each student in the work area (column I), fetch lowest planned page
+ * and write Level, Lowest From, Lowest To (and error if any) in columns P, Q, R, S.
+ * Run from Math Dashboard or Reading Dashboard. Shows loading status in cell T1.
+ */
+function verifyFromClassNavi() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getActiveSheet();
+  var name = sheet.getName();
+  var isMath = name.toLowerCase().indexOf('math') !== -1;
+  var isReading = name.toLowerCase().indexOf('reading') !== -1;
+  var isDashboard = name.toLowerCase().indexOf('dashboard') !== -1;
+  if (!isDashboard || (!isMath && !isReading)) {
+    ui.alert('Wrong sheet', 'Please run "Verify from ClassNavi" from Math Dashboard or Reading Dashboard.', ui.ButtonSet.OK);
+    return;
+  }
+  var subjectCD = isMath ? '010' : '022';
+  var lastRow = sheet.getLastRow();
+  if (lastRow < WORK_AREA_START_ROW) {
+    ui.alert('No data', 'No rows in work area. Load students first.', ui.ButtonSet.OK);
+    return;
+  }
+  var loginIdCol = WORK_AREA_START_COL;
+  var rowsWithLoginId = [];
+  for (var r = WORK_AREA_START_ROW; r <= lastRow; r++) {
+    var val = sheet.getRange(r, loginIdCol).getValue();
+    var id = (val != null && String(val).trim() !== '') ? String(val).trim() : '';
+    if (id) rowsWithLoginId.push({ row: r, loginId: id });
+  }
+  if (rowsWithLoginId.length === 0) {
+    ui.alert('No students', 'No LoginIDs in column I. Load students first.', ui.ButtonSet.OK);
+    return;
+  }
+  var statusRange = sheet.getRange(CLASSNAVI_STATUS_CELL_ROW, CLASSNAVI_STATUS_CELL_COL);
+  function setStatus(msg) {
+    statusRange.setValue(msg);
+    SpreadsheetApp.flush();
+  }
+  setStatus('Verifying... 0/' + rowsWithLoginId.length);
+  var token;
+  try {
+    token = classNaviLogin(CLASSNAVI_LOGIN_ID, CLASSNAVI_PASSWORD_HASH);
+  } catch (e) {
+    statusRange.clearContent();
+    ui.alert('ClassNavi login failed', e.message, ui.ButtonSet.OK);
+    return;
+  }
+  setStatus('Verifying... Fetching student list...');
+  var instructorInfo, centerID, instructorAssistantSec, allStudents;
+  try {
+    instructorInfo = classNaviGetInstructorInfo(token, CLASSNAVI_LOGIN_ID);
+    centerID = instructorInfo.MainCenterID || (instructorInfo.CenterInfoList && instructorInfo.CenterInfoList[0] && instructorInfo.CenterInfoList[0].CenterID);
+    instructorAssistantSec = instructorInfo.InstructorAssistantSec || '2';
+    allStudents = classNaviGetAllStudents(token, centerID, CLASSNAVI_LOGIN_ID, instructorAssistantSec);
+  } catch (e) {
+    statusRange.clearContent();
+    ui.alert('ClassNavi fetch failed', e.message, ui.ButtonSet.OK);
+    return;
+  }
+  var loginIdToStudent = {};
+  for (var i = 0; i < allStudents.length; i++) {
+    var s = allStudents[i];
+    var lid = (s.LoginID != null ? String(s.LoginID) : '') || (s.StudentID != null ? String(s.StudentID) : '');
+    if (lid) loginIdToStudent[lid] = s;
+  }
+  var headersDone = false;
+  for (var i = 0; i < rowsWithLoginId.length; i++) {
+    setStatus('Verifying... ' + (i + 1) + '/' + rowsWithLoginId.length);
+    var item = rowsWithLoginId[i];
+    var r = item.row;
+    var loginId = item.loginId;
+    var level = '';
+    var lowestFrom = '';
+    var lowestTo = '';
+    var errMsg = '';
+    var student = loginIdToStudent[loginId];
+    if (!student) {
+      errMsg = 'Not found in ClassNavi';
+    } else {
+      var studyList = student.StudentStudyInfoList || [];
+      var study = null;
+      for (var j = 0; j < studyList.length; j++) {
+        if (studyList[j].SubjectCD === subjectCD) { study = studyList[j]; break; }
+      }
+      if (!study || study.ClassID == null || study.ClassStudentSeq == null) {
+        errMsg = 'No ' + (isMath ? 'Math' : 'Reading') + ' study info';
+      } else {
+        try {
+          var result = classNaviGetStudyResult(
+            token,
+            student.StudentID || student.LoginID,
+            study.ClassID,
+            study.ClassStudentSeq,
+            subjectCD,
+            centerID,
+            study.NextWorksheetCD
+          );
+          level = study.NextWorksheetCD != null ? String(study.NextWorksheetCD) : '';
+          var lowest = classNaviComputeLowest(result);
+          if (lowest.minFrom != null) lowestFrom = lowest.minFrom;
+          if (lowest.minTo != null) lowestTo = lowest.minTo;
+        } catch (e) {
+          errMsg = e.message ? e.message.substring(0, 100) : 'API error';
+        }
+        Utilities.sleep(400);
+      }
+    }
+    if (!headersDone) {
+      sheet.getRange(2, CLASSNAVI_RESULT_START_COL, 2, CLASSNAVI_RESULT_START_COL + 3).setValues([['ClassNavi Level', 'Lowest From', 'Lowest To', 'ClassNavi Error']]);
+      headersDone = true;
+    }
+    sheet.getRange(r, CLASSNAVI_RESULT_START_COL, r, CLASSNAVI_RESULT_START_COL + 3).setValues([[level, lowestFrom, lowestTo, errMsg]]);
+  }
+  statusRange.clearContent();
+  ui.alert('Verify complete', 'Verified ' + rowsWithLoginId.length + ' students. Results in columns P–S.', ui.ButtonSet.OK);
 }
