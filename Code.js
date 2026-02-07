@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.35';
+const VERSION = '1.0.36';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -988,9 +988,9 @@ function checkInactiveStatus() {
     var lid = (s.LoginID != null ? String(s.LoginID) : '') || (s.StudentID != null ? String(s.StudentID) : '');
     if (lid) loginIdToStudent[lid] = s;
   }
-  // Get status from StudentStudyInfoList: Status "0" = active, "1" = inactive. Not in list = active.
+  // Get status from StudentStudyInfoList: Status "0" = active, "1" = inactive, not in list = not enrolled
   function getSubjectStatus(studyList, subjectCD) {
-    if (!studyList || !Array.isArray(studyList)) return 'active';
+    if (!studyList || !Array.isArray(studyList)) return 'not enrolled';
     var want = subjectCD === '010' || subjectCD === 10 ? [10, '010'] : [22, '022'];
     for (var j = 0; j < studyList.length; j++) {
       var s = studyList[j];
@@ -1000,7 +1000,7 @@ function checkInactiveStatus() {
         return (status === '1' || status === 1) ? 'inactive' : 'active';
       }
     }
-    return 'active';
+    return 'not enrolled';
   }
   var headersDone = false;
   for (var i = 0; i < rowsWithLoginId.length; i++) {
@@ -1009,8 +1009,8 @@ function checkInactiveStatus() {
     var r = item.row;
     var loginId = item.loginId;
     var student = loginIdToStudent[loginId];
-    var mathStatus = 'active';
-    var readingStatus = 'active';
+    var mathStatus = 'not found';
+    var readingStatus = 'not found';
     if (student) {
       var list = student.StudentStudyInfoList || [];
       mathStatus = getSubjectStatus(list, '010');
@@ -1023,5 +1023,5 @@ function checkInactiveStatus() {
     sheet.getRange(r, CLASSNAVI_INACTIVE_MATH_COL, 1, 2).setValues([[mathStatus, readingStatus]]);
   }
   statusRange.clearContent();
-  ui.alert('Done', 'Status for ' + rowsWithLoginId.length + ' students. Subject in center list = inactive. Columns T–U.', ui.ButtonSet.OK);
+  ui.alert('Done', 'Status for ' + rowsWithLoginId.length + ' students. active / inactive / not enrolled. Columns T–U.', ui.ButtonSet.OK);
 }
