@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.21';
+const VERSION = '1.0.22';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -415,33 +415,47 @@ function findSheetByName(ss, word1, word2) {
 
 function loadOneDashboard(sheet, loggedTodayIds, issueRowsFromLog, clearMaxRows) {
   const lastRow = sheet.getLastRow();
-  // I–N headers in row 2; data starts row 3. Clear I:N (rows 3 to end).
-  sheet.getRange(3, 9, Math.max(lastRow, 2 + clearMaxRows), 14).clearContent();
+  // Keep existing work area (I:N) as leftover unsent; then append new rows (no duplicate LoginID).
+  const existingRange = lastRow >= 3 ? sheet.getRange(3, 9, Math.min(lastRow, 2 + clearMaxRows), 14).getValues() : [];
+  const leftover = [];
+  const existingIds = {};
+  for (let r = 0; r < existingRange.length; r++) {
+    const row = existingRange[r];
+    const id = String(row[0] || '').trim();
+    if (!id) continue;
+    leftover.push(row);
+    existingIds[id] = true;
+  }
   const data = lastRow >= 3 ? sheet.getRange(3, 1, lastRow, 7).getValues() : []; // A:G from row 3
   const out = [];
   for (let r = 0; r < data.length; r++) {
     const row = data[r];
     if (String((row[4] || '')).trim().toLowerCase() !== 'send email') continue;
     if (loggedTodayIds[String(row[0] || '')]) continue;
-    out.push([row[0], row[1], row[5], row[6], 'Not Sent', '']); // I:L + M (Status) + N (Notes)
+    out.push([row[0], row[1], row[5], row[6], 'Not Sent', '']); // I:L + M + N
   }
-  const issueSet = {};
-  const merged = [];
-  // First: restore Issue rows from Log (Status=Issue, Notes from Log)
+  const merged = leftover.slice();
+  const addedIds = {};
+  for (let i = 0; i < leftover.length; i++) {
+    addedIds[String(leftover[i][0] || '')] = true;
+  }
+  // Append: Issue rows from Log (if not already in work area)
   for (let i = 0; i < (issueRowsFromLog || []).length; i++) {
     const x = issueRowsFromLog[i];
-    if (!x || !x.loginId) continue;
-    issueSet[x.loginId] = true;
+    if (!x || !x.loginId || addedIds[x.loginId]) continue;
+    addedIds[x.loginId] = true;
     merged.push([x.loginId, x.name, '', x.triggerNum, 'Issue', x.note || '']);
   }
-  // Then: add dashboard rows that are not already restored as Issue (Status=Not Sent)
+  // Append: dashboard SEND EMAIL rows (if not already in work area)
   for (let i = 0; i < out.length; i++) {
     const row = out[i];
-    if (issueSet[row[0]]) continue;
+    if (addedIds[row[0]]) continue;
     merged.push(row);
   }
   if (merged.length > 0) {
-    sheet.getRange(3, 9, 2 + merged.length, 14).setValues(merged); // I:N = 6 columns
+    const endRow = Math.max(lastRow, 2 + clearMaxRows);
+    sheet.getRange(3, 9, endRow, 14).clearContent();
+    sheet.getRange(3, 9, 2 + merged.length, 14).setValues(merged); // I:N
   }
   return merged.length;
 }
