@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.30';
+const VERSION = '1.0.31';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
