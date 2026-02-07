@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.22';
+const VERSION = '1.0.23';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -454,8 +454,8 @@ function loadOneDashboard(sheet, loggedTodayIds, issueRowsFromLog, clearMaxRows)
   }
   if (merged.length > 0) {
     const endRow = Math.max(lastRow, 2 + clearMaxRows);
-    sheet.getRange(3, 9, endRow, 14).clearContent();
-    sheet.getRange(3, 9, 2 + merged.length, 14).setValues(merged); // I:N
+    sheet.getRange(3, 9, endRow, 6).clearContent(); // numRows, numCols (I:N = 6)
+    sheet.getRange(3, 9, merged.length, 6).setValues(merged);
   }
   return merged.length;
 }
