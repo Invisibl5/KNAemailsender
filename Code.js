@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.27';
+const VERSION = '1.0.28';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -376,9 +376,11 @@ function loadToWorkArea() {
     const issueNoteByLoginIdBySubject = { Math: {}, Reading: {} };
     for (let r = 0; r < logData.length; r++) {
       const row = logData[r];
-      const subj = String(row[0] || '').trim();
-      if (subj !== 'Math' && subj !== 'Reading') continue;
-      const loginId = String(row[1] || '');
+      const subjRaw = String(row[0] || '').trim();
+      const subj = subjRaw.toLowerCase() === 'math' ? 'Math' : (subjRaw.toLowerCase() === 'reading' ? 'Reading' : null);
+      if (!subj) continue;
+      const loginId = String(row[1] != null ? row[1] : '').trim();
+      if (!loginId) continue;
       issueNoteByLoginIdBySubject[subj][loginId] = String(row[4] || '');
       const d = row[5];
       if (d != null) {
@@ -462,10 +464,11 @@ function loadOneDashboard(sheet, loggedTodayIds, issueNoteByLoginId, clearMaxRow
   for (let r = 0; r < data.length; r++) {
     const row = data[r];
     if (String((row[4] || '')).trim().toLowerCase() !== 'send email') continue;
-    const id = String(row[0] || '');
+    const id = String(row[0] != null ? row[0] : '').trim();
+    if (!id) continue;
     if (loggedTodayIds[id]) continue;
     const email = row[emailCol] != null ? String(row[emailCol]) : '';
-    const inIssueLog = issueNoteByLoginId && issueNoteByLoginId[id] !== undefined;
+    const inIssueLog = issueNoteByLoginId && Object.prototype.hasOwnProperty.call(issueNoteByLoginId, id);
     const note = inIssueLog ? String(issueNoteByLoginId[id] || '') : '';
     const status = inIssueLog ? 'Issue' : 'Not Sent';
     out.push([row[0], row[1], email, row[6], status, note]);
@@ -473,8 +476,9 @@ function loadOneDashboard(sheet, loggedTodayIds, issueNoteByLoginId, clearMaxRow
   const merged = leftover.slice();
   for (let i = 0; i < out.length; i++) {
     const row = out[i];
-    if (addedIds[row[0]]) continue;
-    addedIds[row[0]] = true;
+    const rowId = String(row[0] != null ? row[0] : '').trim();
+    if (addedIds[rowId]) continue;
+    addedIds[rowId] = true;
     merged.push(row);
   }
   debugLog('Load', 'merge counts', { sheet: sheetName, leftover: leftover.length, fromFilter: out.length, merged: merged.length });
