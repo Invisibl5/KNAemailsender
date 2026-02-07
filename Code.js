@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.36';
+const VERSION = '1.0.37';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -1009,19 +1009,19 @@ function checkInactiveStatus() {
     var r = item.row;
     var loginId = item.loginId;
     var student = loginIdToStudent[loginId];
-    var mathStatus = 'not found';
-    var readingStatus = 'not found';
+    var status = 'not found';
     if (student) {
       var list = student.StudentStudyInfoList || [];
-      mathStatus = getSubjectStatus(list, '010');
-      readingStatus = getSubjectStatus(list, '022');
+      status = isMath ? getSubjectStatus(list, '010') : getSubjectStatus(list, '022');
     }
     if (!headersDone) {
-      sheet.getRange(2, CLASSNAVI_INACTIVE_MATH_COL, 1, 2).setValues([['Math', 'Reading']]);
+      var colLabel = isMath ? 'Math' : 'Reading';
+      sheet.getRange(2, CLASSNAVI_INACTIVE_MATH_COL, 1, 1).setValues([[colLabel]]);
       headersDone = true;
     }
-    sheet.getRange(r, CLASSNAVI_INACTIVE_MATH_COL, 1, 2).setValues([[mathStatus, readingStatus]]);
+    sheet.getRange(r, CLASSNAVI_INACTIVE_MATH_COL, 1, 1).setValues([[status]]);
   }
   statusRange.clearContent();
-  ui.alert('Done', 'Status for ' + rowsWithLoginId.length + ' students. active / inactive / not enrolled. Columns T–U.', ui.ButtonSet.OK);
+  var colLabel = isMath ? 'Math' : 'Reading';
+  ui.alert('Done', 'Status for ' + rowsWithLoginId.length + ' students. active / inactive / not enrolled. Column T = ' + colLabel + '.', ui.ButtonSet.OK);
 }
