@@ -804,8 +804,8 @@ function classNaviComputeLowest(data) {
 
 /**
  * Verify from ClassNavi: for each student in the work area (column I), fetch lowest planned page
- * and write Level, Lowest From, Lowest To (and error if any) in columns P, Q, R, S.
- * Run from Math Dashboard or Reading Dashboard. Shows loading status in cell T1.
+ * for this dashboard's subject only (Math 010 or Reading 022) and write Level, Lowest From,
+ * Lowest To (and error if any) in columns P, Q, R, S. Run from Math or Reading Dashboard.
  */
 function verifyFromClassNavi() {
   var ui = SpreadsheetApp.getUi();
@@ -819,6 +819,7 @@ function verifyFromClassNavi() {
     ui.alert('Wrong sheet', 'Please run "Verify from ClassNavi" from Math Dashboard or Reading Dashboard.', ui.ButtonSet.OK);
     return;
   }
+  // Math Dashboard = only subject 010; Reading Dashboard = only subject 022 (students can do both)
   var subjectCD = isMath ? '010' : '022';
   var lastRow = sheet.getLastRow();
   if (lastRow < WORK_AREA_START_ROW) {
@@ -911,10 +912,10 @@ function verifyFromClassNavi() {
       }
     }
     if (!headersDone) {
-      sheet.getRange(2, CLASSNAVI_RESULT_START_COL, 2, CLASSNAVI_RESULT_START_COL + 3).setValues([['ClassNavi Level', 'Lowest From', 'Lowest To', 'ClassNavi Error']]);
+      sheet.getRange(2, CLASSNAVI_RESULT_START_COL, 1, 4).setValues([['ClassNavi Level', 'Lowest From', 'Lowest To', 'ClassNavi Error']]);
       headersDone = true;
     }
-    sheet.getRange(r, CLASSNAVI_RESULT_START_COL, r, CLASSNAVI_RESULT_START_COL + 3).setValues([[level, lowestFrom, lowestTo, errMsg]]);
+    sheet.getRange(r, CLASSNAVI_RESULT_START_COL, 1, 4).setValues([[level, lowestFrom, lowestTo, errMsg]]);
   }
   statusRange.clearContent();
   ui.alert('Verify complete', 'Verified ' + rowsWithLoginId.length + ' students. Results in columns P–S.', ui.ButtonSet.OK);
