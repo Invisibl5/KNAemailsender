@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.33';
+const VERSION = '1.0.34';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -925,8 +925,8 @@ function verifyFromClassNavi() {
 }
 
 /**
- * Check Active/Inactive: from GetCenterAllStudentList, subject present in list = inactive (Y).
- * N = active or not enrolled. Writes Math Inactive (T) and Reading Inactive (U) for each row with LoginID in I.
+ * Check Active/Inactive: from GetCenterAllStudentList, subject present in StudentStudyInfoList = inactive.
+ * Writes "active" or "inactive" for Math (T) and Reading (U). SubjectCD can be 010/022 or 10/22.
  */
 function checkInactiveStatus() {
   var ui = SpreadsheetApp.getUi();
@@ -987,10 +987,13 @@ function checkInactiveStatus() {
     var lid = (s.LoginID != null ? String(s.LoginID) : '') || (s.StudentID != null ? String(s.StudentID) : '');
     if (lid) loginIdToStudent[lid] = s;
   }
+  // SubjectCD from API can be string '010'/'022' or number 10/22
   function hasSubject(studyList, subjectCD) {
     if (!studyList || !Array.isArray(studyList)) return false;
+    var want = subjectCD === '010' || subjectCD === 10 ? [10, '010'] : [22, '022'];
     for (var j = 0; j < studyList.length; j++) {
-      if (studyList[j].SubjectCD === subjectCD) return true;
+      var cd = studyList[j].SubjectCD;
+      if (cd === want[0] || cd === want[1]) return true;
     }
     return false;
   }
@@ -1001,19 +1004,19 @@ function checkInactiveStatus() {
     var r = item.row;
     var loginId = item.loginId;
     var student = loginIdToStudent[loginId];
-    var mathInactive = 'N';
-    var readingInactive = 'N';
+    var mathStatus = 'active';
+    var readingStatus = 'active';
     if (student) {
       var list = student.StudentStudyInfoList || [];
-      if (hasSubject(list, '010')) mathInactive = 'Y';
-      if (hasSubject(list, '022')) readingInactive = 'Y';
+      if (hasSubject(list, '010')) mathStatus = 'inactive';
+      if (hasSubject(list, '022')) readingStatus = 'inactive';
     }
     if (!headersDone) {
-      sheet.getRange(2, CLASSNAVI_INACTIVE_MATH_COL, 1, 2).setValues([['Math Inactive', 'Reading Inactive']]);
+      sheet.getRange(2, CLASSNAVI_INACTIVE_MATH_COL, 1, 2).setValues([['Math', 'Reading']]);
       headersDone = true;
     }
-    sheet.getRange(r, CLASSNAVI_INACTIVE_MATH_COL, 1, 2).setValues([[mathInactive, readingInactive]]);
+    sheet.getRange(r, CLASSNAVI_INACTIVE_MATH_COL, 1, 2).setValues([[mathStatus, readingStatus]]);
   }
   statusRange.clearContent();
-  ui.alert('Done', 'Inactive status for ' + rowsWithLoginId.length + ' students. Y = inactive, N = active or not enrolled. Columns T–U.', ui.ButtonSet.OK);
+  ui.alert('Done', 'Status for ' + rowsWithLoginId.length + ' students. Subject in center list = inactive. Columns T–U.', ui.ButtonSet.OK);
 }
