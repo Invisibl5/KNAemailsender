@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.20';
+const VERSION = '1.0.21';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -356,10 +356,11 @@ function loadToWorkArea() {
   const todayT = (today && today.getTime) ? today.getTime() : (typeof today === 'number' ? today : 0);
   const todayDay = Math.floor(todayT / 86400000);
 
-  // Build logged-today LoginIDs per subject (Log I=subject, J=LoginID, N=date)
+  // Build logged-today LoginIDs per subject and Issue rows to restore (Log I:N = Subject, LoginID, Name, Trigger #, Note, Date)
   const logLastRow = Math.max(logSheet.getLastRow(), 1);
   const logData = logSheet.getRange(2, 9, logLastRow, 14).getValues(); // I:N
   const loggedTodayBySubject = { Math: {}, Reading: {} };
+  const issueRowsBySubject = { Math: [], Reading: [] };
   for (let r = 0; r < logData.length; r++) {
     const row = logData[r];
     const subj = String(row[0] || '').trim();
@@ -369,6 +370,13 @@ function loadToWorkArea() {
     const t = (d && d.getTime) ? d.getTime() : (typeof d === 'number' ? d : 0);
     if (Math.floor(t / 86400000) === todayDay) {
       loggedTodayBySubject[subj][String(row[1])] = true;
+      // Issue rows to restore: bring back LoginID, Name, Trigger #, Note so user can re-edit and send or move again
+      issueRowsBySubject[subj].push({
+        loginId: String(row[1] || ''),
+        name: String(row[2] || ''),
+        triggerNum: row[3] != null ? row[3] : '',
+        note: String(row[4] || '')
+      });
     }
   }
 
@@ -378,18 +386,18 @@ function loadToWorkArea() {
   // Load Math Dashboard
   const mathSheet = ss.getSheetByName('Math Dashboard') || findSheetByName(ss, 'math', 'dashboard');
   if (mathSheet) {
-    mathCount = loadOneDashboard(mathSheet, loggedTodayBySubject.Math || {}, 500);
+    mathCount = loadOneDashboard(mathSheet, loggedTodayBySubject.Math || {}, issueRowsBySubject.Math || [], 500);
   }
 
   // Load Reading Dashboard
   const readingSheet = ss.getSheetByName('Reading Dashboard') || findSheetByName(ss, 'reading', 'dashboard');
   if (readingSheet) {
-    readingCount = loadOneDashboard(readingSheet, loggedTodayBySubject.Reading || {}, 500);
+    readingCount = loadOneDashboard(readingSheet, loggedTodayBySubject.Reading || {}, issueRowsBySubject.Reading || [], 500);
   }
 
   SpreadsheetApp.getUi().alert(
     'Load complete',
-    'Math: ' + mathCount + ' rows\nReading: ' + readingCount + ' rows\nFill Status/Notes in M:N, then hit Move.',
+    'Math: ' + mathCount + ' rows\nReading: ' + readingCount + ' rows\nIssue rows from the Log are restored with Status=Issue and Notes. Edit and send to Sent or Move back to Log.',
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
@@ -405,29 +413,37 @@ function findSheetByName(ss, word1, word2) {
   return null;
 }
 
-function loadOneDashboard(sheet, loggedTodayIds, clearMaxRows) {
+function loadOneDashboard(sheet, loggedTodayIds, issueRowsFromLog, clearMaxRows) {
   const lastRow = sheet.getLastRow();
-  // I–N headers in row 2; data starts row 3
-  sheet.getRange(3, 9, Math.max(lastRow, clearMaxRows), 4).clearContent();
-  if (lastRow < 3) return 0;
-  const data = sheet.getRange(3, 1, lastRow, 7).getValues(); // A:G from row 3
+  // I–N headers in row 2; data starts row 3. Clear I:N (rows 3 to end).
+  sheet.getRange(3, 9, Math.max(lastRow, 2 + clearMaxRows), 14).clearContent();
+  const data = lastRow >= 3 ? sheet.getRange(3, 1, lastRow, 7).getValues() : []; // A:G from row 3
   const out = [];
   for (let r = 0; r < data.length; r++) {
     const row = data[r];
     if (String((row[4] || '')).trim().toLowerCase() !== 'send email') continue;
     if (loggedTodayIds[String(row[0] || '')]) continue;
-    out.push([row[0], row[1], row[5], row[6]]); // A, B, F, G -> I, J, K, L
+    out.push([row[0], row[1], row[5], row[6], 'Not Sent', '']); // I:L + M (Status) + N (Notes)
   }
-  if (out.length > 0) {
-    sheet.getRange(3, 9, out.length, 4).setValues(out);
-    // Set Status (M) to "Not Sent" for all loaded rows
-    const statusCol = [];
-    for (let i = 0; i < out.length; i++) {
-      statusCol.push(['Not Sent']);
-    }
-    sheet.getRange(3, 13, statusCol.length, 1).setValues(statusCol);
+  const issueSet = {};
+  const merged = [];
+  // First: restore Issue rows from Log (Status=Issue, Notes from Log)
+  for (let i = 0; i < (issueRowsFromLog || []).length; i++) {
+    const x = issueRowsFromLog[i];
+    if (!x || !x.loginId) continue;
+    issueSet[x.loginId] = true;
+    merged.push([x.loginId, x.name, '', x.triggerNum, 'Issue', x.note || '']);
   }
-  return out.length;
+  // Then: add dashboard rows that are not already restored as Issue (Status=Not Sent)
+  for (let i = 0; i < out.length; i++) {
+    const row = out[i];
+    if (issueSet[row[0]]) continue;
+    merged.push(row);
+  }
+  if (merged.length > 0) {
+    sheet.getRange(3, 9, 2 + merged.length, 14).setValues(merged); // I:N = 6 columns
+  }
+  return merged.length;
 }
 
 /**
