@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.37';
+const VERSION = '1.0.38';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -25,7 +25,6 @@ function onOpen() {
     .addItem('Move', 'syncDashboardToLog')
     .addSeparator()
     .addItem('Verify from ClassNavi', 'verifyFromClassNavi')
-    .addItem('Check Active/Inactive', 'checkInactiveStatus')
     .addToUi();
 }
 
@@ -806,9 +805,9 @@ function classNaviComputeLowest(data) {
 }
 
 /**
- * Verify from ClassNavi: for each student in the work area (column I), fetch lowest planned page
- * for this dashboard's subject only (Math 010 or Reading 022) and write Level, Lowest From,
- * Lowest To (and error if any) in columns P, Q, R, S. Run from Math or Reading Dashboard.
+ * Verify from ClassNavi: combined. For each student in work area (column I), fetches lowest planned page
+ * (P–S) and active/inactive status (T) for this dashboard's subject only. Run from Math or Reading Dashboard.
+ * Loading shown in cell T1 throughout.
  */
 function verifyFromClassNavi() {
   var ui = SpreadsheetApp.getUi();
@@ -822,17 +821,16 @@ function verifyFromClassNavi() {
     ui.alert('Wrong sheet', 'Please run "Verify from ClassNavi" from Math Dashboard or Reading Dashboard.', ui.ButtonSet.OK);
     return;
   }
-  // Math Dashboard = only subject 010; Reading Dashboard = only subject 022 (students can do both)
   var subjectCD = isMath ? '010' : '022';
+  var colLabel = isMath ? 'Math' : 'Reading';
   var lastRow = sheet.getLastRow();
   if (lastRow < WORK_AREA_START_ROW) {
     ui.alert('No data', 'No rows in work area. Load students first.', ui.ButtonSet.OK);
     return;
   }
-  var loginIdCol = WORK_AREA_START_COL;
   var rowsWithLoginId = [];
   for (var r = WORK_AREA_START_ROW; r <= lastRow; r++) {
-    var val = sheet.getRange(r, loginIdCol).getValue();
+    var val = sheet.getRange(r, WORK_AREA_START_COL).getValue();
     var id = (val != null && String(val).trim() !== '') ? String(val).trim() : '';
     if (id) rowsWithLoginId.push({ row: r, loginId: id });
   }
@@ -845,7 +843,7 @@ function verifyFromClassNavi() {
     statusRange.setValue(msg);
     SpreadsheetApp.flush();
   }
-  setStatus('Verifying... 0/' + rowsWithLoginId.length);
+  setStatus('Verifying... Logging in... 0/' + rowsWithLoginId.length);
   var token;
   try {
     token = classNaviLogin(CLASSNAVI_LOGIN_ID, CLASSNAVI_PASSWORD_HASH);
@@ -854,7 +852,7 @@ function verifyFromClassNavi() {
     ui.alert('ClassNavi login failed', e.message, ui.ButtonSet.OK);
     return;
   }
-  setStatus('Verifying... Fetching student list...');
+  setStatus('Verifying... Fetching student list... 0/' + rowsWithLoginId.length);
   var instructorInfo, centerID, instructorAssistantSec, allStudents;
   try {
     instructorInfo = classNaviGetInstructorInfo(token, CLASSNAVI_LOGIN_ID);
@@ -872,6 +870,19 @@ function verifyFromClassNavi() {
     var lid = (s.LoginID != null ? String(s.LoginID) : '') || (s.StudentID != null ? String(s.StudentID) : '');
     if (lid) loginIdToStudent[lid] = s;
   }
+  function getSubjectStatus(studyList, subjCD) {
+    if (!studyList || !Array.isArray(studyList)) return 'not enrolled';
+    var want = subjCD === '010' || subjCD === 10 ? [10, '010'] : [22, '022'];
+    for (var j = 0; j < studyList.length; j++) {
+      var s = studyList[j];
+      var cd = s.SubjectCD;
+      if (cd === want[0] || cd === want[1]) {
+        var st = s.Status;
+        return (st === '1' || st === 1) ? 'inactive' : 'active';
+      }
+    }
+    return 'not enrolled';
+  }
   var headersDone = false;
   for (var i = 0; i < rowsWithLoginId.length; i++) {
     setStatus('Verifying... ' + (i + 1) + '/' + rowsWithLoginId.length);
@@ -882,17 +893,19 @@ function verifyFromClassNavi() {
     var lowestFrom = '';
     var lowestTo = '';
     var errMsg = '';
+    var activeStatus = 'not found';
     var student = loginIdToStudent[loginId];
     if (!student) {
       errMsg = 'Not found in ClassNavi';
     } else {
       var studyList = student.StudentStudyInfoList || [];
+      activeStatus = getSubjectStatus(studyList, subjectCD);
       var study = null;
       for (var j = 0; j < studyList.length; j++) {
-        if (studyList[j].SubjectCD === subjectCD) { study = studyList[j]; break; }
+        if (studyList[j].SubjectCD === subjectCD || studyList[j].SubjectCD === (isMath ? 10 : 22)) { study = studyList[j]; break; }
       }
       if (!study || study.ClassID == null || study.ClassStudentSeq == null) {
-        errMsg = 'No ' + (isMath ? 'Math' : 'Reading') + ' study info';
+        if (!errMsg) errMsg = 'No ' + colLabel + ' study info';
       } else {
         try {
           var result = classNaviGetStudyResult(
@@ -915,113 +928,11 @@ function verifyFromClassNavi() {
       }
     }
     if (!headersDone) {
-      sheet.getRange(2, CLASSNAVI_RESULT_START_COL, 1, 4).setValues([['ClassNavi Level', 'Lowest From', 'Lowest To', 'ClassNavi Error']]);
+      sheet.getRange(2, CLASSNAVI_RESULT_START_COL, 1, 5).setValues([['ClassNavi Level', 'Lowest From', 'Lowest To', 'ClassNavi Error', colLabel]]);
       headersDone = true;
     }
-    sheet.getRange(r, CLASSNAVI_RESULT_START_COL, 1, 4).setValues([[level, lowestFrom, lowestTo, errMsg]]);
+    sheet.getRange(r, CLASSNAVI_RESULT_START_COL, 1, 5).setValues([[level, lowestFrom, lowestTo, errMsg, activeStatus]]);
   }
   statusRange.clearContent();
-  ui.alert('Verify complete', 'Verified ' + rowsWithLoginId.length + ' students. Results in columns P–S.', ui.ButtonSet.OK);
-}
-
-/**
- * Check Active/Inactive: from GetCenterAllStudentList, use Status in StudentStudyInfoList.
- * Status "0" = active, Status "1" = inactive. Not in list = active (not enrolled).
- * Writes Math (T) and Reading (U) as "active" or "inactive".
- */
-function checkInactiveStatus() {
-  var ui = SpreadsheetApp.getUi();
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getActiveSheet();
-  var name = sheet.getName();
-  var isMath = name.toLowerCase().indexOf('math') !== -1;
-  var isReading = name.toLowerCase().indexOf('reading') !== -1;
-  var isDashboard = name.toLowerCase().indexOf('dashboard') !== -1;
-  if (!isDashboard || (!isMath && !isReading)) {
-    ui.alert('Wrong sheet', 'Please run "Check Active/Inactive" from Math Dashboard or Reading Dashboard.', ui.ButtonSet.OK);
-    return;
-  }
-  var lastRow = sheet.getLastRow();
-  if (lastRow < WORK_AREA_START_ROW) {
-    ui.alert('No data', 'No rows in work area. Load students first.', ui.ButtonSet.OK);
-    return;
-  }
-  var rowsWithLoginId = [];
-  for (var r = WORK_AREA_START_ROW; r <= lastRow; r++) {
-    var val = sheet.getRange(r, WORK_AREA_START_COL).getValue();
-    var id = (val != null && String(val).trim() !== '') ? String(val).trim() : '';
-    if (id) rowsWithLoginId.push({ row: r, loginId: id });
-  }
-  if (rowsWithLoginId.length === 0) {
-    ui.alert('No students', 'No LoginIDs in column I. Load students first.', ui.ButtonSet.OK);
-    return;
-  }
-  var statusRange = sheet.getRange(CLASSNAVI_STATUS_CELL_ROW, CLASSNAVI_STATUS_CELL_COL);
-  function setStatus(msg) {
-    statusRange.setValue(msg);
-    SpreadsheetApp.flush();
-  }
-  setStatus('Checking inactive... 0/' + rowsWithLoginId.length);
-  var token;
-  try {
-    token = classNaviLogin(CLASSNAVI_LOGIN_ID, CLASSNAVI_PASSWORD_HASH);
-  } catch (e) {
-    statusRange.clearContent();
-    ui.alert('ClassNavi login failed', e.message, ui.ButtonSet.OK);
-    return;
-  }
-  setStatus('Checking inactive... Fetching student list...');
-  var instructorInfo, centerID, instructorAssistantSec, allStudents;
-  try {
-    instructorInfo = classNaviGetInstructorInfo(token, CLASSNAVI_LOGIN_ID);
-    centerID = instructorInfo.MainCenterID || (instructorInfo.CenterInfoList && instructorInfo.CenterInfoList[0] && instructorInfo.CenterInfoList[0].CenterID);
-    instructorAssistantSec = instructorInfo.InstructorAssistantSec || '2';
-    allStudents = classNaviGetAllStudents(token, centerID, CLASSNAVI_LOGIN_ID, instructorAssistantSec);
-  } catch (e) {
-    statusRange.clearContent();
-    ui.alert('ClassNavi fetch failed', e.message, ui.ButtonSet.OK);
-    return;
-  }
-  var loginIdToStudent = {};
-  for (var i = 0; i < allStudents.length; i++) {
-    var s = allStudents[i];
-    var lid = (s.LoginID != null ? String(s.LoginID) : '') || (s.StudentID != null ? String(s.StudentID) : '');
-    if (lid) loginIdToStudent[lid] = s;
-  }
-  // Get status from StudentStudyInfoList: Status "0" = active, "1" = inactive, not in list = not enrolled
-  function getSubjectStatus(studyList, subjectCD) {
-    if (!studyList || !Array.isArray(studyList)) return 'not enrolled';
-    var want = subjectCD === '010' || subjectCD === 10 ? [10, '010'] : [22, '022'];
-    for (var j = 0; j < studyList.length; j++) {
-      var s = studyList[j];
-      var cd = s.SubjectCD;
-      if (cd === want[0] || cd === want[1]) {
-        var status = s.Status;
-        return (status === '1' || status === 1) ? 'inactive' : 'active';
-      }
-    }
-    return 'not enrolled';
-  }
-  var headersDone = false;
-  for (var i = 0; i < rowsWithLoginId.length; i++) {
-    setStatus('Checking inactive... ' + (i + 1) + '/' + rowsWithLoginId.length);
-    var item = rowsWithLoginId[i];
-    var r = item.row;
-    var loginId = item.loginId;
-    var student = loginIdToStudent[loginId];
-    var status = 'not found';
-    if (student) {
-      var list = student.StudentStudyInfoList || [];
-      status = isMath ? getSubjectStatus(list, '010') : getSubjectStatus(list, '022');
-    }
-    if (!headersDone) {
-      var colLabel = isMath ? 'Math' : 'Reading';
-      sheet.getRange(2, CLASSNAVI_INACTIVE_MATH_COL, 1, 1).setValues([[colLabel]]);
-      headersDone = true;
-    }
-    sheet.getRange(r, CLASSNAVI_INACTIVE_MATH_COL, 1, 1).setValues([[status]]);
-  }
-  statusRange.clearContent();
-  var colLabel = isMath ? 'Math' : 'Reading';
-  ui.alert('Done', 'Status for ' + rowsWithLoginId.length + ' students. active / inactive / not enrolled. Column T = ' + colLabel + '.', ui.ButtonSet.OK);
+  ui.alert('Verify complete', 'Verified ' + rowsWithLoginId.length + ' students. P–S: Level/Lowest/Error. T: ' + colLabel + ' (active/inactive/not enrolled).', ui.ButtonSet.OK);
 }
