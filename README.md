@@ -123,3 +123,9 @@ You can have **Apps Script update automatically** whenever you push to `main`. A
    - If you haven’t already: run `clasp clone <SCRIPT_ID>` or `clasp create --type standalone --title "KNAemailsender"` in this folder, then commit and push `.clasp.json`.
 
 After this, every **push to `main`** will trigger the workflow and update your Apps Script project automatically.
+
+---
+
+## Developer note (Cursor / worktrees)
+
+If you use Cursor with a worktree and see **"Failed to apply worktree to current branch"** or **EROFS: read-only file system, mkdir '/Desktop'"**, the editor is resolving the project path incorrectly. Open the project using the **full path** (e.g. `/Users/yourusername/Desktop/Kumon Email Sender`) instead of a shortcut or relative path. Push from the terminal: `git push origin main` from the repo folder.

@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.39';
+const VERSION = '1.0.40';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -213,7 +213,7 @@ function syncDashboardToLog() {
     if (!sentLog) {
       sentLog = ss.insertSheet(SENT_LOG_SHEET_NAME);
       sentLog.getRange(1, 1, 1, 4).setValues([['Math LoginID', 'Math Name', 'Math Trigger #', 'Date']]);
-      sentLog.getRange(1, 5, 1, 4).setValues([['Reading LoginID', 'Reading Name', 'Reading Trigger #', 'Date']]);
+      sentLog.getRange(1, 5, 1, 8).setValues([['Reading LoginID', 'Reading Name', 'Reading Trigger #', 'Date']]);
     }
     let issueLog = ss.getSheetByName(ISSUE_LOG_SHEET_NAME);
     if (!issueLog) {
