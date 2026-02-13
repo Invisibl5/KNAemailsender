@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.38';
+const VERSION = '1.0.39';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -171,27 +171,22 @@ function importFromDrive() {
   ui.alert('Import from Drive', messages.join('\n'), ui.ButtonSet.OK);
 }
 
-// --- Dashboard → Log sync (button entry point) ---
-// Log: A–C = Math Sent, E–G = Reading Sent, I–N = Issue (Subject,LoginID,Name,Trigger #,Note,Date)
-//
-// FILTER: To have Status and Notes shift up with the filtered rows, include M and N in the FILTER array.
-// Then the spilled result has Status and Notes as the last columns (correct for each row). Those cells are
-// read-only (formula output); to edit Status/Notes, edit the source row on the dashboard.
-//
-// Math (A,B,F,G + M,N so Status/Notes align):
-//   =FILTER({'Math Dashboard'!A:A,'Math Dashboard'!B:B,'Math Dashboard'!F:F,'Math Dashboard'!G:G,'Math Dashboard'!M:M,'Math Dashboard'!N:N}, 'Math Dashboard'!E:E="SEND EMAIL", ISNA(MATCH('Math Dashboard'!A:A, FILTER(Log!J:J, Log!I:I="Math", Log!N:N=TODAY()), 0)))
-//
-// Reading: same pattern with 'Reading Dashboard'! and Log!I:I="Reading".
+// --- Dashboard → Sent Log / Issue Log (button entry point) ---
+// Sent Log: A–D = Math (LoginID, Name, Trigger #, Date), E–H = Reading (same). Issue Log: separate sheet, 7 cols.
 
-/** Expected dashboard headers (row 1). Status values: Not Sent, Issue, Sent. */
+const SENT_LOG_SHEET_NAME = 'Sent Log';
+const ISSUE_LOG_SHEET_NAME = 'Issue Log';
+const ISSUE_LOG_HEADERS = ['Subject', 'LoginID', 'Name', 'Trigger Number', 'Note', 'Date', 'Tag'];
+const TAG_ISSUE = 'Issue';
+const TAG_ISSUE_ARCHIVE = 'Issue - Archive';
+
+/** Expected dashboard headers. Status: Not Sent, Issue, Issue - Archive, Sent. */
 const DASHBOARD_HEADERS = ['LoginID', 'Name', 'Trigger #', 'Email', 'Status', 'Notes'];
 
 /**
- * Syncs the current dashboard to the Log sheet. Tie this function to your button.
- * Runs on whichever sheet is active (must be "Math Dashboard" or "Reading Dashboard").
- * - Ignores "Not Sent".
- * - "Issue": appends Subject, LoginID, Name, Trigger #, Note to Log columns I–M (Subject in I).
- * - "Sent": appends LoginID, Name, Trigger # to Log columns A–C (Math) or E–G (Reading).
+ * Syncs the current dashboard to Sent Log and Issue Log.
+ * - "Sent" → Sent Log (Math A–D or Reading E–H), Date in D or H.
+ * - "Issue" → Issue Log with Tag "Issue". "Issue - Archive" → Issue Log with Tag "Issue - Archive".
  */
 function syncDashboardToLog() {
   try {
@@ -214,123 +209,125 @@ function syncDashboardToLog() {
     }
 
     const subject = isMath ? 'Math' : 'Reading';
-    let logSheet = ss.getSheetByName('Log');
-  if (!logSheet) {
-    logSheet = ss.insertSheet('Log');
-    // Set headers for Log (A–C Math Sent, E–G Reading Sent, I–N Issue). getRange(row, col, numRows, numCols)
-    const h1 = [['Math LoginID', 'Math Name', 'Math Trigger #']];
-    const h2 = [['Reading LoginID', 'Reading Name', 'Reading Trigger #']];
-    const h3 = [['Subject', 'LoginID', 'Name', 'Trigger #', 'Note', 'Date']];
-    logSheet.getRange(1, 1, 1, 3).setValues(h1);
-    logSheet.getRange(1, 5, 1, 3).setValues(h2);
-    logSheet.getRange(1, 9, 1, 6).setValues(h3);
-  }
+    let sentLog = ss.getSheetByName(SENT_LOG_SHEET_NAME);
+    if (!sentLog) {
+      sentLog = ss.insertSheet(SENT_LOG_SHEET_NAME);
+      sentLog.getRange(1, 1, 1, 4).setValues([['Math LoginID', 'Math Name', 'Math Trigger #', 'Date']]);
+      sentLog.getRange(1, 5, 1, 4).setValues([['Reading LoginID', 'Reading Name', 'Reading Trigger #', 'Date']]);
+    }
+    let issueLog = ss.getSheetByName(ISSUE_LOG_SHEET_NAME);
+    if (!issueLog) {
+      issueLog = ss.insertSheet(ISSUE_LOG_SHEET_NAME);
+      issueLog.getRange(1, 1, 1, ISSUE_LOG_HEADERS.length).setValues([ISSUE_LOG_HEADERS]);
+    }
 
-  // I–N headers are in row 2; data starts row 3
-  const headerRow = sheet.getRange(2, 1, 2, sheet.getLastColumn()).getValues()[0];
-  const col = getColumnIndices(headerRow);
-  // Use the LoginID/Name/Trigger # block that contains Status (second block: I,J,K,L,M,N = LoginID,Name,Email,Trigger #,Status,Notes)
-  if (col.status >= 4) {
-    col.loginId = col.status - 4;
-    col.name = col.status - 3;
-    col.triggerNum = col.status - 1; // Trigger # is in L (Email is K = status - 2)
-  }
+    const headerRow = sheet.getRange(2, 1, 2, sheet.getLastColumn()).getValues()[0];
+    const col = getColumnIndices(headerRow);
+    if (col.status >= 4) {
+      col.loginId = col.status - 4;
+      col.name = col.status - 3;
+      col.triggerNum = col.status - 1;
+    }
 
-  if (!col.loginId || !col.status) {
-    SpreadsheetApp.getUi().alert(
-      'Missing headers',
-      'Dashboard must have headers for I–N (LoginID, Name, Trigger #, Email, Status, Notes) in row 2.',
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-    return;
-  }
+    if (!col.loginId || !col.status) {
+      SpreadsheetApp.getUi().alert(
+        'Missing headers',
+        'Dashboard must have headers for I–N (LoginID, Name, Trigger #, Email, Status, Notes) in row 2.',
+        SpreadsheetApp.getUi().ButtonSet.OK
+      );
+      return;
+    }
 
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 3) return;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 3) return;
 
-  const issueRows = [];
-  const issueSheetRows = [];
-  const sentMathRows = [];
-  const sentMathSheetRows = [];
-  const sentReadingRows = [];
-  const sentReadingSheetRows = [];
+    const issueRows = [];
+    const issueSheetRows = [];
+    const sentMathRows = [];
+    const sentMathSheetRows = [];
+    const sentReadingRows = [];
+    const sentReadingSheetRows = [];
 
-  const dataRange = sheet.getRange(3, 1, lastRow, sheet.getLastColumn());
-  const rows = dataRange.getValues();
+    const dataRange = sheet.getRange(3, 1, lastRow, sheet.getLastColumn());
+    const rows = dataRange.getValues();
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const loginId = row[col.loginId - 1];
-    // Only process rows that have work-area data (LoginID in I); skip blank rows
-    if (loginId === null || loginId === undefined || String(loginId).trim() === '') continue;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const loginId = row[col.loginId - 1];
+      if (loginId === null || loginId === undefined || String(loginId).trim() === '') continue;
 
-    const status = String((row[col.status - 1] || '')).trim();
-    if (status === '' || status.toLowerCase() === 'not sent') continue;
+      const status = String((row[col.status - 1] || '')).trim();
+      if (status === '' || status.toLowerCase() === 'not sent') continue;
 
-    const studentName = row[col.name - 1];
-    const triggerNum = row[col.triggerNum - 1];
-    const note = (col.notes && row[col.notes - 1] != null) ? row[col.notes - 1] : '';
+      const studentName = row[col.name - 1];
+      const triggerNum = row[col.triggerNum - 1];
+      const note = (col.notes && row[col.notes - 1] != null) ? row[col.notes - 1] : '';
 
-    if (status.toLowerCase() === 'issue') {
-      issueRows.push([subject, loginId, studentName, triggerNum, note]);
-      issueSheetRows.push(3 + i);
-    } else if (status.toLowerCase() === 'sent') {
-      if (isMath) {
-        sentMathRows.push([loginId, studentName, triggerNum]);
-        sentMathSheetRows.push(3 + i);
-      } else {
-        sentReadingRows.push([loginId, studentName, triggerNum]);
-        sentReadingSheetRows.push(3 + i);
+      const statusLower = status.toLowerCase();
+      if (statusLower === 'issue' || statusLower === 'issue - archive') {
+        const tag = statusLower === 'issue - archive' ? TAG_ISSUE_ARCHIVE : TAG_ISSUE;
+        issueRows.push([subject, loginId, studentName, triggerNum, note, tag]);
+        issueSheetRows.push(3 + i);
+      } else if (statusLower === 'sent') {
+        if (isMath) {
+          sentMathRows.push([loginId, studentName, triggerNum]);
+          sentMathSheetRows.push(3 + i);
+        } else {
+          sentReadingRows.push([loginId, studentName, triggerNum]);
+          sentReadingSheetRows.push(3 + i);
+        }
       }
     }
-  }
 
-  // Append to Log. getRange(row, col, numRows, numCols) — 3rd/4th args are numRows/numCols, not endRow/endCol
-  if (sentMathRows.length > 0) {
-    const nextRow = getNextLogRow(logSheet, 1) + 1;
-    const numRows = sentMathRows.length;
-    logSheet.getRange(nextRow, 1, numRows, 3).setValues(sentMathRows);
-  }
-  if (sentReadingRows.length > 0) {
-    const nextRow = getNextLogRow(logSheet, 5) + 1;
-    const numRows = sentReadingRows.length;
-    logSheet.getRange(nextRow, 5, numRows, 3).setValues(sentReadingRows);
-  }
-  if (issueRows.length > 0) {
-    const nextRow = getNextLogRow(logSheet, 9) + 1;
-    const numRows = issueRows.length;
-    // Issue: I–N = Subject,LoginID,Name,Trigger #,Note,Date (do not write to G; G is for Reading Sent Trigger # only)
-    logSheet.getRange(nextRow, 9, numRows, 5).setValues(issueRows);
-    // Use spreadsheet's TODAY() so the date matches the sheet timezone (not script/server timezone)
-    const todayCell = logSheet.getRange(1, 20);
+    const todayCell = sentLog.getRange(1, 20);
     todayCell.setFormula('=TODAY()');
     SpreadsheetApp.flush();
     const today = todayCell.getValue();
     todayCell.clearContent();
-    const dateCol = [];
-    for (let i = 0; i < numRows; i++) {
-      dateCol.push([today]);
-    }
-    logSheet.getRange(nextRow, 14, dateCol.length, 1).setValues(dateCol);
-    // Clear Status and Notes on the dashboard for the rows we just logged
-    for (let r = 0; r < issueSheetRows.length; r++) {
-      const sheetRow = issueSheetRows[r];
-      sheet.getRange(sheetRow, col.status).clearContent();
-      if (col.notes) sheet.getRange(sheetRow, col.notes).clearContent();
-    }
-  }
 
-  // Delete full rows for logged rows (from bottom to top)
-  const rowsToDelete = issueSheetRows.concat(sentMathSheetRows || [], sentReadingSheetRows || []);
-  if (rowsToDelete.length > 0) {
-    const sorted = rowsToDelete.slice().sort(function (a, b) { return b - a; });
-    for (let d = 0; d < sorted.length; d++) {
-      sheet.deleteRow(sorted[d]);
+    if (sentMathRows.length > 0) {
+      const nextRow = getNextLogRow(sentLog, 1) + 1;
+      const numRows = sentMathRows.length;
+      sentLog.getRange(nextRow, 1, numRows, 3).setValues(sentMathRows);
+      const dateCol = [];
+      for (let i = 0; i < numRows; i++) dateCol.push([today]);
+      sentLog.getRange(nextRow, 4, dateCol.length, 1).setValues(dateCol);
     }
-  }
+    if (sentReadingRows.length > 0) {
+      const nextRow = getNextLogRow(sentLog, 5) + 1;
+      const numRows = sentReadingRows.length;
+      sentLog.getRange(nextRow, 5, numRows, 3).setValues(sentReadingRows);
+      const dateCol = [];
+      for (let i = 0; i < numRows; i++) dateCol.push([today]);
+      sentLog.getRange(nextRow, 8, dateCol.length, 1).setValues(dateCol);
+    }
+
+    if (issueRows.length > 0) {
+      const nextRow = getNextLogRow(issueLog, 1) + 1;
+      const numRows = issueRows.length;
+      const issueData = [];
+      for (let i = 0; i < numRows; i++) {
+        const r = issueRows[i];
+        issueData.push([r[0], r[1], r[2], r[3], r[4], today, r[5]]);
+      }
+      issueLog.getRange(nextRow, 1, issueData.length, ISSUE_LOG_HEADERS.length).setValues(issueData);
+      for (let r = 0; r < issueSheetRows.length; r++) {
+        const sheetRow = issueSheetRows[r];
+        sheet.getRange(sheetRow, col.status).clearContent();
+        if (col.notes) sheet.getRange(sheetRow, col.notes).clearContent();
+      }
+    }
+
+    const rowsToDelete = issueSheetRows.concat(sentMathSheetRows || [], sentReadingSheetRows || []);
+    if (rowsToDelete.length > 0) {
+      const sorted = rowsToDelete.slice().sort(function (a, b) { return b - a; });
+      for (let d = 0; d < sorted.length; d++) {
+        sheet.deleteRow(sorted[d]);
+      }
+    }
 
     const msg = [
-      subject + ' Dashboard → Log',
+      subject + ' Dashboard → Sent Log / Issue Log',
       'Sent: ' + (isMath ? sentMathRows.length : sentReadingRows.length),
       'Issues: ' + issueRows.length,
       rowsToDelete.length > 0 ? 'Rows removed from sheet.' : ''
@@ -344,9 +341,8 @@ function syncDashboardToLog() {
   }
 }
 
-// Log Issue columns: I=Subject, J=LoginID, K=Name, L=Trigger #, M=Note, N=Date
-const LOG_ISSUE_START_COL = 9;
-const LOG_ISSUE_NUM_COLS = 6;
+// Issue Log sheet: 7 columns = Subject, LoginID, Name, Trigger Number, Note, Date, Tag
+const ISSUE_LOG_NUM_COLS = 7;
 
 /**
  * Looks up Email for a student by LoginID from Math Data or Reading Data sheet.
@@ -386,78 +382,108 @@ function getEmailFromDataSheet(ss, subject, loginId) {
 }
 
 /**
- * Load: runs the filter (E=SEND EMAIL, not logged today) for both Math and Reading dashboards,
- * PLUS brings back Issue log entries (Status=Issue, Note) with email lookup.
- * Move sends to log; Load brings from log. Removes brought-back entries from Issue log and compacts.
+ * Load: SEND EMAIL filter; not logged today (from Sent Log D/H = today).
+ * Issue Log: Tag "Issue - Archive" → exclude from load. Tag "Issue" → bring back Status + Note; remove those rows from Issue Log.
  */
 function loadToWorkArea() {
   try {
     debugLog('Load', 'loadToWorkArea start');
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const logSheet = ss.getSheetByName('Log');
-    if (!logSheet) {
-      SpreadsheetApp.getUi().alert('No Log sheet', 'Create a Log sheet first (run Move once to create it).', SpreadsheetApp.getUi().ButtonSet.OK);
+    const sentLog = ss.getSheetByName(SENT_LOG_SHEET_NAME);
+    const issueLog = ss.getSheetByName(ISSUE_LOG_SHEET_NAME);
+    if (!sentLog || !issueLog) {
+      SpreadsheetApp.getUi().alert('Missing sheets', 'Need "Sent Log" and "Issue Log". Run Move once to create them.', SpreadsheetApp.getUi().ButtonSet.OK);
       return;
     }
 
-    const logLastRow = Math.max(logSheet.getLastRow(), 1);
-    const logNumRows = Math.max(logLastRow - 1, 0);
-    const logData = logNumRows > 0 ? logSheet.getRange(2, LOG_ISSUE_START_COL, logNumRows, LOG_ISSUE_NUM_COLS).getValues() : [];
-    if (logData.length > 0 && logData[0].length !== LOG_ISSUE_NUM_COLS) {
-      debugLog('Load', 'Log I:N column count', { rows: logData.length, cols: logData[0].length, expected: LOG_ISSUE_NUM_COLS });
+    const todayCell = issueLog.getRange(1, 20);
+    todayCell.setFormula('=TODAY()');
+    SpreadsheetApp.flush();
+    const today = todayCell.getValue();
+    todayCell.clearContent();
+    const todayT = (today && today.getTime) ? today.getTime() : (typeof today === 'number' ? today : 0);
+    const todayDay = Math.floor(todayT / 86400000);
+
+    const sentLastRow = Math.max(sentLog.getLastRow(), 1);
+    const sentNumRows = Math.max(sentLastRow - 1, 0);
+    const loggedTodayBySubject = { Math: {}, Reading: {} };
+    if (sentNumRows > 0) {
+      const sentData = sentLog.getRange(2, 1, sentNumRows, 8).getValues();
+      for (let r = 0; r < sentData.length; r++) {
+        const row = sentData[r];
+        const mathDate = row[3];
+        if (row[0] != null && String(row[0]).trim() !== '' && mathDate != null) {
+          const t = (mathDate && mathDate.getTime) ? mathDate.getTime() : (typeof mathDate === 'number' ? mathDate : 0);
+          if (Math.floor(t / 86400000) === todayDay) {
+            loggedTodayBySubject.Math[String(row[0]).trim()] = true;
+          }
+        }
+        const readDate = row[7];
+        if (row[4] != null && String(row[4]).trim() !== '' && readDate != null) {
+          const t = (readDate && readDate.getTime) ? readDate.getTime() : (typeof readDate === 'number' ? readDate : 0);
+          if (Math.floor(t / 86400000) === todayDay) {
+            loggedTodayBySubject.Reading[String(row[4]).trim()] = true;
+          }
+        }
+      }
     }
 
-    // Parse Issue log: Subject, LoginID, Name, Trigger #, Note, Date (I-N)
-    // issueNoteByLoginIdAndTrigger[subject][loginId][triggerNum] = note (for dashboard rows that are in log)
-    // issueEntriesBySubject[subject] = [{loginId, name, triggerNum, note, sheetRow}]
+    const issueLastRow = Math.max(issueLog.getLastRow(), 1);
+    const issueNumRows = Math.max(issueLastRow - 1, 0);
+    const issueData = issueNumRows > 0 ? issueLog.getRange(2, 1, issueNumRows, ISSUE_LOG_NUM_COLS).getValues() : [];
     const issueNoteByLoginIdAndTrigger = { Math: {}, Reading: {} };
     const issueEntriesBySubject = { Math: [], Reading: [] };
-    for (let r = 0; r < logData.length; r++) {
-      const row = logData[r];
+    const excludeFromLoadBySubject = { Math: {}, Reading: {} };
+    for (let r = 0; r < issueData.length; r++) {
+      const row = issueData[r];
       const subjRaw = String(row[0] || '').trim();
       const subj = subjRaw.toLowerCase() === 'math' ? 'Math' : (subjRaw.toLowerCase() === 'reading' ? 'Reading' : null);
       if (!subj) continue;
       const loginId = String(row[1] != null ? row[1] : '').trim();
       if (!loginId) continue;
-      const triggerNum = row[3];
-      const note = String(row[4] || '');
+      const tag = String(row[6] || '').trim();
       const sheetRow = 2 + r;
-      if (!issueNoteByLoginIdAndTrigger[subj][loginId]) {
-        issueNoteByLoginIdAndTrigger[subj][loginId] = {};
+      if (tag === TAG_ISSUE_ARCHIVE) {
+        excludeFromLoadBySubject[subj][loginId] = true;
+        continue;
       }
-      issueNoteByLoginIdAndTrigger[subj][loginId][normalizeTrigger(triggerNum)] = note;
-      issueEntriesBySubject[subj].push({ loginId: loginId, name: row[2], triggerNum: triggerNum, note: note, sheetRow: sheetRow });
+      if (tag === TAG_ISSUE) {
+        const triggerNum = row[3];
+        const note = String(row[4] || '');
+        if (!issueNoteByLoginIdAndTrigger[subj][loginId]) {
+          issueNoteByLoginIdAndTrigger[subj][loginId] = {};
+        }
+        issueNoteByLoginIdAndTrigger[subj][loginId][normalizeTrigger(triggerNum)] = note;
+        issueEntriesBySubject[subj].push({ loginId: loginId, name: row[2], triggerNum: triggerNum, note: note, sheetRow: sheetRow });
+      }
     }
-    debugLog('Load', 'Log parsed', {
-      mathIssues: issueEntriesBySubject.Math.length,
-      readingIssues: issueEntriesBySubject.Reading.length
-    });
 
-    // Don't exclude logged-today: Move sends to log, Load brings from log (including today)
-    const loggedTodayIds = { Math: {}, Reading: {} };
-
-    const broughtBackKeys = []; // {subject, loginId, triggerNum} for compacting Log
+    const broughtBackKeys = [];
 
     let mathCount = 0;
     let readingCount = 0;
 
     const mathSheet = ss.getSheetByName('Math Dashboard') || findSheetByName(ss, 'math', 'dashboard');
     if (mathSheet) {
-      mathCount = loadOneDashboard(mathSheet, loggedTodayIds.Math, issueNoteByLoginIdAndTrigger.Math, issueEntriesBySubject.Math, ss, 'Math', broughtBackKeys, 500);
+      mathCount = loadOneDashboard(mathSheet, loggedTodayBySubject.Math, excludeFromLoadBySubject.Math, issueNoteByLoginIdAndTrigger.Math, issueEntriesBySubject.Math, ss, 'Math', broughtBackKeys, 500);
     }
 
     const readingSheet = ss.getSheetByName('Reading Dashboard') || findSheetByName(ss, 'reading', 'dashboard');
     if (readingSheet) {
-      readingCount = loadOneDashboard(readingSheet, loggedTodayIds.Reading, issueNoteByLoginIdAndTrigger.Reading, issueEntriesBySubject.Reading, ss, 'Reading', broughtBackKeys, 500);
+      readingCount = loadOneDashboard(readingSheet, loggedTodayBySubject.Reading, excludeFromLoadBySubject.Reading, issueNoteByLoginIdAndTrigger.Reading, issueEntriesBySubject.Reading, ss, 'Reading', broughtBackKeys, 500);
     }
 
     if (broughtBackKeys.length > 0) {
-      compactIssueLog(logSheet, broughtBackKeys, logData);
+      const rowsToDelete = broughtBackKeys.map(function (k) { return k.sheetRow; }).filter(function (r, i, arr) { return arr.indexOf(r) === i; }).sort(function (a, b) { return b - a; });
+      for (let d = 0; d < rowsToDelete.length; d++) {
+        issueLog.deleteRow(rowsToDelete[d]);
+      }
+      debugLog('Load', 'Removed from Issue Log', { count: rowsToDelete.length });
     }
 
     SpreadsheetApp.getUi().alert(
       'Load complete',
-      'Math: ' + mathCount + ' rows\nReading: ' + readingCount + ' rows\nFilter: SEND EMAIL + Issue log (brought back). Brought ' + broughtBackKeys.length + ' from Issue log.',
+      'Math: ' + mathCount + ' rows\nReading: ' + readingCount + ' rows\nSEND EMAIL filter. Issue (not Archive) brought back; those removed from Issue Log.',
       SpreadsheetApp.getUi().ButtonSet.OK
     );
   } catch (e) {
@@ -471,42 +497,6 @@ function loadToWorkArea() {
 function normalizeTrigger(t) {
   if (t == null) return '';
   return String(t).trim();
-}
-
-/**
- * Removes Issue log entries that were brought back to dashboards, then compacts I-N by shifting rows up.
- * @param {GoogleAppsScript.Spreadsheet.Sheet} logSheet
- * @param {Array<{subject: string, loginId: string, triggerNum: *}>} keysToRemove
- * @param {Array<Array>} logData - full I:N data (from row 2)
- */
-function compactIssueLog(logSheet, keysToRemove, logData) {
-  const removeSet = {};
-  for (let i = 0; i < keysToRemove.length; i++) {
-    const k = keysToRemove[i];
-    const key = k.subject + '|' + String(k.loginId).trim() + '|' + normalizeTrigger(k.triggerNum);
-    removeSet[key] = true;
-  }
-  const remaining = [];
-  for (let r = 0; r < logData.length; r++) {
-    const row = logData[r];
-    const subjRaw = String(row[0] || '').trim();
-    const subj = subjRaw.toLowerCase() === 'math' ? 'Math' : (subjRaw.toLowerCase() === 'reading' ? 'Reading' : null);
-    if (!subj) continue;
-    const loginId = String(row[1] != null ? row[1] : '').trim();
-    if (!loginId) continue;
-    const triggerNum = row[3];
-    const key = subj + '|' + loginId + '|' + normalizeTrigger(triggerNum);
-    if (removeSet[key]) continue;
-    remaining.push(row);
-  }
-  const firstRow = 2;
-  const lastRow = firstRow + logData.length - 1;
-  if (lastRow < firstRow) return;
-  logSheet.getRange(firstRow, LOG_ISSUE_START_COL, lastRow, LOG_ISSUE_START_COL + LOG_ISSUE_NUM_COLS - 1).clearContent();
-  if (remaining.length > 0) {
-    logSheet.getRange(firstRow, LOG_ISSUE_START_COL, remaining.length, LOG_ISSUE_NUM_COLS).setValues(remaining);
-  }
-  debugLog('Load', 'compactIssueLog', { removed: keysToRemove.length, remaining: remaining.length });
 }
 
 function findSheetByName(ss, word1, word2) {
@@ -530,7 +520,7 @@ function debugLog(context, message, detail) {
   Logger.log('[KNA ' + context + '] ' + message + d);
 }
 
-function loadOneDashboard(sheet, loggedTodayIds, issueNoteByLoginIdAndTrigger, issueEntriesFromLog, ss, subject, broughtBackKeys, clearMaxRows) {
+function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLoginIdAndTrigger, issueEntriesFromLog, ss, subject, broughtBackKeys, clearMaxRows) {
   const sheetName = sheet.getName();
   debugLog('Load', 'loadOneDashboard start', { sheet: sheetName });
   const lastRow = sheet.getLastRow();
@@ -563,6 +553,7 @@ function loadOneDashboard(sheet, loggedTodayIds, issueNoteByLoginIdAndTrigger, i
     const id = String(row[0] != null ? row[0] : '').trim();
     if (!id) continue;
     if (loggedTodayIds[id]) continue;
+    if (excludeFromLoad && excludeFromLoad[id]) continue;
     const triggerNum = row[6];
     const email = row[emailCol] != null ? String(row[emailCol]) : '';
     const noteMap = issueNoteByLoginIdAndTrigger && issueNoteByLoginIdAndTrigger[id];
@@ -587,7 +578,7 @@ function loadOneDashboard(sheet, loggedTodayIds, issueNoteByLoginIdAndTrigger, i
     addedKeys[key(id, tr)] = true;
     const email = getEmailFromDataSheet(ss, subject, id);
     merged.push([ent.loginId, ent.name, email, ent.triggerNum, 'Issue', ent.note]);
-    broughtBackKeys.push({ subject: subject, loginId: id, triggerNum: tr });
+    broughtBackKeys.push({ subject: subject, loginId: id, triggerNum: tr, sheetRow: ent.sheetRow });
   }
   debugLog('Load', 'merge counts', { sheet: sheetName, leftover: leftover.length, fromFilter: out.length, fromIssueLog: issueEntriesFromLog.length, merged: merged.length });
   if (merged.length > 0) {
