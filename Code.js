@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.40';
+const VERSION = '1.0.41';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -118,9 +118,36 @@ function importCsvToSheet(csvFile, sheetName) {
 }
 
 /**
+ * Returns a folder name for today in YYYY-MM-DD format (e.g. 2026-02-13).
+ * Uses the script's timezone (spreadsheet owner).
+ * @returns {string}
+ */
+function getArchiveDateFolderName() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+
+/**
+ * Gets or creates the date-named subfolder inside the archive folder (e.g. Archive/2026-02-13).
+ * @param {GoogleAppsScript.Drive.Folder} archiveFolder - the root Archive folder
+ * @returns {GoogleAppsScript.Drive.Folder}
+ */
+function getOrCreateArchiveDateFolder(archiveFolder) {
+  const dateName = getArchiveDateFolderName();
+  let dateFolder = getChildFolderByName(archiveFolder, dateName);
+  if (!dateFolder) {
+    dateFolder = archiveFolder.createFolder(dateName);
+  }
+  return dateFolder;
+}
+
+/**
  * Moves a Drive file into the archive folder (add to archive, remove from current parent).
  * @param {GoogleAppsScript.Drive.File} file
- * @param {GoogleAppsScript.Drive.Folder} archiveFolder
+ * @param {GoogleAppsScript.Drive.Folder} archiveFolder - can be the root Archive or a date subfolder
  */
 function moveToArchive(file, archiveFolder) {
   const parents = file.getParents();
@@ -132,12 +159,13 @@ function moveToArchive(file, archiveFolder) {
 
 /**
  * Main import: reads Math and Reading CSVs from the import folder,
- * writes them to "Math Data" and "Reading Data", then moves the files to Archive.
+ * writes them to "Math Data" and "Reading Data", then moves the files to Archive/YYYY-MM-DD/.
  */
 function importFromDrive() {
   const ui = SpreadsheetApp.getUi();
   const importFolder = getOrCreateImportFolder();
   const archiveFolder = getChildFolderByName(importFolder, ARCHIVE_FOLDER_NAME);
+  const archiveDateFolder = getOrCreateArchiveDateFolder(archiveFolder);
 
   const mathFile = findLatestCsvBySubject(importFolder, 'Math');
   const readingFile = findLatestCsvBySubject(importFolder, 'Reading');
@@ -147,7 +175,7 @@ function importFromDrive() {
   if (mathFile) {
     try {
       importCsvToSheet(mathFile, 'Math Data');
-      moveToArchive(mathFile, archiveFolder);
+      moveToArchive(mathFile, archiveDateFolder);
       messages.push('Math: imported and archived "' + mathFile.getName() + '"');
     } catch (e) {
       messages.push('Math: error - ' + e.message);
@@ -159,7 +187,7 @@ function importFromDrive() {
   if (readingFile) {
     try {
       importCsvToSheet(readingFile, 'Reading Data');
-      moveToArchive(readingFile, archiveFolder);
+      moveToArchive(readingFile, archiveDateFolder);
       messages.push('Reading: imported and archived "' + readingFile.getName() + '"');
     } catch (e) {
       messages.push('Reading: error - ' + e.message);
