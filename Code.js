@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.45';
+const VERSION = '1.0.46';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -660,8 +660,8 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
         const email = String(row[2] || '').trim(); // Email is at index 2 (column K)
         // If LoginID exists and Trigger# exists but email is empty, fill it
         if (loginId && triggerNum != null && triggerNum !== '' && (!email || email === '')) {
-          // Try to get email from dashboard data first (match by LoginID)
           let newEmail = '';
+          // Try dashboard data first (match by LoginID)
           for (let d = 0; d < data.length; d++) {
             const dataRow = data[d];
             const dataId = String(dataRow[0] != null ? dataRow[0] : '').trim();
@@ -670,14 +670,22 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
               if (newEmail && newEmail.trim() !== '') break;
             }
           }
-          // If still empty, try Data sheet
+          // ALWAYS try Data sheet (even if dashboard had something, in case it was wrong/empty)
           if (!newEmail || newEmail.trim() === '') {
             newEmail = getEmailFromDataSheet(ss, subject, loginId);
+          }
+          // If still empty and this is Reading, also try Math Data (in case student is in wrong sheet)
+          if ((!newEmail || newEmail.trim() === '') && subject === 'Reading') {
+            newEmail = getEmailFromDataSheet(ss, 'Math', loginId);
+          }
+          // If still empty and this is Math, also try Reading Data
+          if ((!newEmail || newEmail.trim() === '') && subject === 'Math') {
+            newEmail = getEmailFromDataSheet(ss, 'Reading', loginId);
           }
           if (newEmail && newEmail.trim() !== '') {
             verifyData[r][2] = newEmail; // Update email at index 2
             updated = true;
-            debugLog('Load', 'filled missing email', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId, triggerNum: triggerNum });
+            debugLog('Load', 'filled missing email', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId, triggerNum: triggerNum, email: newEmail });
           } else {
             debugLog('Load', 'WARNING: could not find email', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId, triggerNum: triggerNum });
           }
@@ -687,6 +695,37 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
         verifyRange.setValues(verifyData);
         SpreadsheetApp.flush();
         debugLog('Load', 'verification complete - emails filled', { sheet: sheetName, rowsUpdated: verifyData.length });
+        // Second pass: wait another second and verify again in case of any missed rows
+        Utilities.sleep(1000);
+        SpreadsheetApp.flush();
+        const verifyRange2 = sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, verifyNumRows, WORK_AREA_COLS);
+        const verifyData2 = verifyRange2.getValues();
+        let updated2 = false;
+        for (let r = 0; r < verifyData2.length; r++) {
+          const row = verifyData2[r];
+          const loginId2 = String(row[0] || '').trim();
+          const triggerNum2 = row[3];
+          const email2 = String(row[2] || '').trim();
+          if (loginId2 && triggerNum2 != null && triggerNum2 !== '' && (!email2 || email2 === '')) {
+            let newEmail2 = getEmailFromDataSheet(ss, subject, loginId2);
+            if ((!newEmail2 || newEmail2.trim() === '') && subject === 'Reading') {
+              newEmail2 = getEmailFromDataSheet(ss, 'Math', loginId2);
+            }
+            if ((!newEmail2 || newEmail2.trim() === '') && subject === 'Math') {
+              newEmail2 = getEmailFromDataSheet(ss, 'Reading', loginId2);
+            }
+            if (newEmail2 && newEmail2.trim() !== '') {
+              verifyData2[r][2] = newEmail2;
+              updated2 = true;
+              debugLog('Load', 'filled missing email (pass 2)', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId2, triggerNum: triggerNum2 });
+            }
+          }
+        }
+        if (updated2) {
+          verifyRange2.setValues(verifyData2);
+          SpreadsheetApp.flush();
+          debugLog('Load', 'verification pass 2 complete', { sheet: sheetName });
+        }
       }
     }
   }
