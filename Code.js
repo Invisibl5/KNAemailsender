@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.46';
+const VERSION = '1.0.47';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -643,89 +643,118 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
     sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, merged.length, WORK_AREA_COLS).setValues(merged);
     debugLog('Load', 'write done', { sheet: sheetName, rows: merged.length, cols: WORK_AREA_COLS });
     
-    // Wait 2 seconds, then verify and fill any missing emails
-    Utilities.sleep(2000);
+    // Wait 3 seconds, then do comprehensive verification and fill any missing emails
+    Utilities.sleep(3000);
     SpreadsheetApp.flush();
-    // Check ALL rows in work area, not just merged.length
+    
+    // Re-read the ENTIRE dashboard sheet to get current state (not stale data)
     const currentLastRow = sheet.getLastRow();
     const verifyNumRows = currentLastRow >= WORK_AREA_START_ROW ? currentLastRow - WORK_AREA_START_ROW + 1 : 0;
     if (verifyNumRows > 0) {
+      // Re-read dashboard sheet data (rows 3+) with ALL columns to get fresh email data
+      const freshDataRange = sheet.getRange(3, 1, Math.max(currentLastRow - 2, 0), Math.max(sheet.getLastColumn(), 7));
+      const freshData = freshDataRange.getValues();
+      const freshHeaderRow = sheet.getRange(2, 1, 1, Math.max(sheet.getLastColumn(), 7)).getValues()[0];
+      const freshCol = getColumnIndices(freshHeaderRow);
+      const freshEmailCol = (freshCol.email && freshCol.email >= 1 && freshCol.email <= freshDataRange.getNumColumns()) ? freshCol.email - 1 : 5;
+      
       const verifyRange = sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, verifyNumRows, WORK_AREA_COLS);
       const verifyData = verifyRange.getValues();
       let updated = false;
-      for (let r = 0; r < verifyData.length; r++) {
-        const row = verifyData[r];
-        const loginId = String(row[0] || '').trim();
-        const triggerNum = row[3];
-        const email = String(row[2] || '').trim(); // Email is at index 2 (column K)
-        // If LoginID exists and Trigger# exists but email is empty, fill it
-        if (loginId && triggerNum != null && triggerNum !== '' && (!email || email === '')) {
-          let newEmail = '';
-          // Try dashboard data first (match by LoginID)
-          for (let d = 0; d < data.length; d++) {
-            const dataRow = data[d];
-            const dataId = String(dataRow[0] != null ? dataRow[0] : '').trim();
-            if (dataId === loginId) {
-              newEmail = dataRow[emailCol] != null ? String(dataRow[emailCol]) : '';
-              if (newEmail && newEmail.trim() !== '') break;
+      
+      // Multiple verification passes to catch everything
+      for (let pass = 0; pass < 3; pass++) {
+        if (pass > 0) {
+          Utilities.sleep(1000);
+          SpreadsheetApp.flush();
+          // Re-read after each pass
+          const freshDataRange2 = sheet.getRange(3, 1, Math.max(currentLastRow - 2, 0), Math.max(sheet.getLastColumn(), 7));
+          const freshData2 = freshDataRange2.getValues();
+          for (let r = 0; r < verifyData.length; r++) {
+            const row = verifyData[r];
+            const loginId = String(row[0] || '').trim();
+            const triggerNum = row[3];
+            const email = String(row[2] || '').trim();
+            // If still missing email, try to find it
+            if (loginId && triggerNum != null && triggerNum !== '' && (!email || email === '')) {
+              let newEmail = '';
+              // Check fresh dashboard data (rows 3+) for this LoginID
+              for (let d = 0; d < freshData2.length; d++) {
+                const dataRow = freshData2[d];
+                const dataId = String(dataRow[0] != null ? dataRow[0] : '').trim();
+                if (dataId === loginId) {
+                  newEmail = dataRow[freshEmailCol] != null ? String(dataRow[freshEmailCol]) : '';
+                  if (newEmail && newEmail.trim() !== '') break;
+                }
+              }
+              // Try subject Data sheet
+              if (!newEmail || newEmail.trim() === '') {
+                newEmail = getEmailFromDataSheet(ss, subject, loginId);
+              }
+              // Try opposite Data sheet
+              if ((!newEmail || newEmail.trim() === '') && subject === 'Reading') {
+                newEmail = getEmailFromDataSheet(ss, 'Math', loginId);
+              }
+              if ((!newEmail || newEmail.trim() === '') && subject === 'Math') {
+                newEmail = getEmailFromDataSheet(ss, 'Reading', loginId);
+              }
+              if (newEmail && newEmail.trim() !== '') {
+                verifyData[r][2] = newEmail;
+                updated = true;
+                debugLog('Load', 'filled missing email (pass ' + (pass + 1) + ')', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId, triggerNum: triggerNum });
+              }
             }
           }
-          // ALWAYS try Data sheet (even if dashboard had something, in case it was wrong/empty)
-          if (!newEmail || newEmail.trim() === '') {
-            newEmail = getEmailFromDataSheet(ss, subject, loginId);
-          }
-          // If still empty and this is Reading, also try Math Data (in case student is in wrong sheet)
-          if ((!newEmail || newEmail.trim() === '') && subject === 'Reading') {
-            newEmail = getEmailFromDataSheet(ss, 'Math', loginId);
-          }
-          // If still empty and this is Math, also try Reading Data
-          if ((!newEmail || newEmail.trim() === '') && subject === 'Math') {
-            newEmail = getEmailFromDataSheet(ss, 'Reading', loginId);
-          }
-          if (newEmail && newEmail.trim() !== '') {
-            verifyData[r][2] = newEmail; // Update email at index 2
-            updated = true;
-            debugLog('Load', 'filled missing email', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId, triggerNum: triggerNum, email: newEmail });
-          } else {
-            debugLog('Load', 'WARNING: could not find email', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId, triggerNum: triggerNum });
+        } else {
+          // First pass: check all rows
+          for (let r = 0; r < verifyData.length; r++) {
+            const row = verifyData[r];
+            const loginId = String(row[0] || '').trim();
+            const triggerNum = row[3];
+            const email = String(row[2] || '').trim();
+            if (loginId && triggerNum != null && triggerNum !== '' && (!email || email === '')) {
+              let newEmail = '';
+              // Check fresh dashboard data (rows 3+) for this LoginID
+              for (let d = 0; d < freshData.length; d++) {
+                const dataRow = freshData[d];
+                const dataId = String(dataRow[0] != null ? dataRow[0] : '').trim();
+                if (dataId === loginId) {
+                  newEmail = dataRow[freshEmailCol] != null ? String(dataRow[freshEmailCol]) : '';
+                  if (newEmail && newEmail.trim() !== '') break;
+                }
+              }
+              // Try subject Data sheet
+              if (!newEmail || newEmail.trim() === '') {
+                newEmail = getEmailFromDataSheet(ss, subject, loginId);
+              }
+              // Try opposite Data sheet
+              if ((!newEmail || newEmail.trim() === '') && subject === 'Reading') {
+                newEmail = getEmailFromDataSheet(ss, 'Math', loginId);
+              }
+              if ((!newEmail || newEmail.trim() === '') && subject === 'Math') {
+                newEmail = getEmailFromDataSheet(ss, 'Reading', loginId);
+              }
+              if (newEmail && newEmail.trim() !== '') {
+                verifyData[r][2] = newEmail;
+                updated = true;
+                debugLog('Load', 'filled missing email (pass 1)', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId, triggerNum: triggerNum });
+              } else {
+                debugLog('Load', 'WARNING: could not find email', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId, triggerNum: triggerNum });
+              }
+            }
           }
         }
+        
+        if (updated && pass === 0) {
+          verifyRange.setValues(verifyData);
+          SpreadsheetApp.flush();
+        }
       }
+      
       if (updated) {
         verifyRange.setValues(verifyData);
         SpreadsheetApp.flush();
-        debugLog('Load', 'verification complete - emails filled', { sheet: sheetName, rowsUpdated: verifyData.length });
-        // Second pass: wait another second and verify again in case of any missed rows
-        Utilities.sleep(1000);
-        SpreadsheetApp.flush();
-        const verifyRange2 = sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, verifyNumRows, WORK_AREA_COLS);
-        const verifyData2 = verifyRange2.getValues();
-        let updated2 = false;
-        for (let r = 0; r < verifyData2.length; r++) {
-          const row = verifyData2[r];
-          const loginId2 = String(row[0] || '').trim();
-          const triggerNum2 = row[3];
-          const email2 = String(row[2] || '').trim();
-          if (loginId2 && triggerNum2 != null && triggerNum2 !== '' && (!email2 || email2 === '')) {
-            let newEmail2 = getEmailFromDataSheet(ss, subject, loginId2);
-            if ((!newEmail2 || newEmail2.trim() === '') && subject === 'Reading') {
-              newEmail2 = getEmailFromDataSheet(ss, 'Math', loginId2);
-            }
-            if ((!newEmail2 || newEmail2.trim() === '') && subject === 'Math') {
-              newEmail2 = getEmailFromDataSheet(ss, 'Reading', loginId2);
-            }
-            if (newEmail2 && newEmail2.trim() !== '') {
-              verifyData2[r][2] = newEmail2;
-              updated2 = true;
-              debugLog('Load', 'filled missing email (pass 2)', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId2, triggerNum: triggerNum2 });
-            }
-          }
-        }
-        if (updated2) {
-          verifyRange2.setValues(verifyData2);
-          SpreadsheetApp.flush();
-          debugLog('Load', 'verification pass 2 complete', { sheet: sheetName });
-        }
+        debugLog('Load', 'verification complete - all emails filled', { sheet: sheetName, rowsChecked: verifyData.length });
       }
     }
   }
