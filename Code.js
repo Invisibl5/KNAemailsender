@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.50';
+const VERSION = '1.0.51';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -413,30 +413,18 @@ function getEmailFromTriggersSheet(ss, subject, triggerNum) {
     const triggersSheet = triggersSheets[s];
     if (triggersSheet.getLastRow() < 2) continue;
     
-    // Read triggers sheet - assume column A has trigger numbers, column B (or another column) has email subject lines
-    const headerRow = triggersSheet.getRange(1, 1, 1, triggersSheet.getLastColumn()).getValues()[0];
-    let triggerCol = 0;
-    let emailCol = 1; // Default to column B
-    
-    // Find trigger number column (usually column A or column with "Trigger" in header)
-    for (let c = 0; c < headerRow.length; c++) {
-      const h = String(headerRow[c] || '').trim().toLowerCase();
-      if (h.indexOf('trigger') !== -1 || h === '#' || h === 'number' || h === 'num') {
-        triggerCol = c;
-        break;
-      }
+    // Column A:B = Math triggers (trigger number, email name)
+    // Column D:E = Reading triggers (trigger number, email name)
+    let triggerCol, emailCol;
+    if (subject === 'Math') {
+      triggerCol = 0; // Column A (index 0)
+      emailCol = 1;  // Column B (index 1)
+    } else {
+      triggerCol = 3; // Column D (index 3)
+      emailCol = 4;   // Column E (index 4)
     }
     
-    // Find email/subject column (usually column B or column with "Email", "Subject", "Message" in header)
-    for (let c = 0; c < headerRow.length; c++) {
-      const h = String(headerRow[c] || '').trim().toLowerCase();
-      if (h.indexOf('email') !== -1 || h.indexOf('subject') !== -1 || h.indexOf('message') !== -1 || h.indexOf('text') !== -1) {
-        emailCol = c;
-        break;
-      }
-    }
-    
-    const data = triggersSheet.getRange(2, 1, triggersSheet.getLastRow() - 1, triggersSheet.getLastColumn()).getValues();
+    const data = triggersSheet.getRange(2, 1, triggersSheet.getLastRow() - 1, Math.max(triggersSheet.getLastColumn(), 5)).getValues();
     for (let r = 0; r < data.length; r++) {
       const row = data[r];
       const rowTrigger = String(row[triggerCol] != null ? row[triggerCol] : '').trim();
@@ -444,7 +432,7 @@ function getEmailFromTriggersSheet(ss, subject, triggerNum) {
       if (rowTrigger === triggerStr) {
         const email = row[emailCol] != null ? String(row[emailCol]) : '';
         if (email && email.trim() !== '') {
-          debugLog('Triggers', 'found email', { sheet: triggersSheet.getName(), triggerNum: triggerNum, email: email });
+          debugLog('Triggers', 'found email', { sheet: triggersSheet.getName(), subject: subject, triggerNum: triggerNum, email: email });
           return email;
         }
       }
@@ -454,7 +442,7 @@ function getEmailFromTriggersSheet(ss, subject, triggerNum) {
       if (!isNaN(rowTriggerNum) && !isNaN(triggerNumNum) && rowTriggerNum === triggerNumNum) {
         const email = row[emailCol] != null ? String(row[emailCol]) : '';
         if (email && email.trim() !== '') {
-          debugLog('Triggers', 'found email (numeric match)', { sheet: triggersSheet.getName(), triggerNum: triggerNum, email: email });
+          debugLog('Triggers', 'found email (numeric match)', { sheet: triggersSheet.getName(), subject: subject, triggerNum: triggerNum, email: email });
           return email;
         }
       }
