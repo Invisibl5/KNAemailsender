@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.44';
+const VERSION = '1.0.45';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -646,39 +646,48 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
     // Wait 2 seconds, then verify and fill any missing emails
     Utilities.sleep(2000);
     SpreadsheetApp.flush();
-    const verifyRange = sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, merged.length, WORK_AREA_COLS);
-    const verifyData = verifyRange.getValues();
-    let updated = false;
-    for (let r = 0; r < verifyData.length; r++) {
-      const row = verifyData[r];
-      const loginId = String(row[0] || '').trim();
-      const email = String(row[2] || '').trim(); // Email is at index 2 (column K)
-      if (loginId && (!email || email === '')) {
-        // Try to get email from dashboard data first
-        let newEmail = '';
-        for (let d = 0; d < data.length; d++) {
-          const dataRow = data[d];
-          const dataId = String(dataRow[0] != null ? dataRow[0] : '').trim();
-          if (dataId === loginId) {
-            newEmail = dataRow[emailCol] != null ? String(dataRow[emailCol]) : '';
-            break;
+    // Check ALL rows in work area, not just merged.length
+    const currentLastRow = sheet.getLastRow();
+    const verifyNumRows = currentLastRow >= WORK_AREA_START_ROW ? currentLastRow - WORK_AREA_START_ROW + 1 : 0;
+    if (verifyNumRows > 0) {
+      const verifyRange = sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, verifyNumRows, WORK_AREA_COLS);
+      const verifyData = verifyRange.getValues();
+      let updated = false;
+      for (let r = 0; r < verifyData.length; r++) {
+        const row = verifyData[r];
+        const loginId = String(row[0] || '').trim();
+        const triggerNum = row[3];
+        const email = String(row[2] || '').trim(); // Email is at index 2 (column K)
+        // If LoginID exists and Trigger# exists but email is empty, fill it
+        if (loginId && triggerNum != null && triggerNum !== '' && (!email || email === '')) {
+          // Try to get email from dashboard data first (match by LoginID)
+          let newEmail = '';
+          for (let d = 0; d < data.length; d++) {
+            const dataRow = data[d];
+            const dataId = String(dataRow[0] != null ? dataRow[0] : '').trim();
+            if (dataId === loginId) {
+              newEmail = dataRow[emailCol] != null ? String(dataRow[emailCol]) : '';
+              if (newEmail && newEmail.trim() !== '') break;
+            }
+          }
+          // If still empty, try Data sheet
+          if (!newEmail || newEmail.trim() === '') {
+            newEmail = getEmailFromDataSheet(ss, subject, loginId);
+          }
+          if (newEmail && newEmail.trim() !== '') {
+            verifyData[r][2] = newEmail; // Update email at index 2
+            updated = true;
+            debugLog('Load', 'filled missing email', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId, triggerNum: triggerNum });
+          } else {
+            debugLog('Load', 'WARNING: could not find email', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId, triggerNum: triggerNum });
           }
         }
-        // If still empty, try Data sheet
-        if (!newEmail || newEmail.trim() === '') {
-          newEmail = getEmailFromDataSheet(ss, subject, loginId);
-        }
-        if (newEmail && newEmail.trim() !== '') {
-          verifyData[r][2] = newEmail; // Update email at index 2
-          updated = true;
-          debugLog('Load', 'filled missing email', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId });
-        }
       }
-    }
-    if (updated) {
-      verifyRange.setValues(verifyData);
-      SpreadsheetApp.flush();
-      debugLog('Load', 'verification complete - emails filled', { sheet: sheetName });
+      if (updated) {
+        verifyRange.setValues(verifyData);
+        SpreadsheetApp.flush();
+        debugLog('Load', 'verification complete - emails filled', { sheet: sheetName, rowsUpdated: verifyData.length });
+      }
     }
   }
   return merged.length;
