@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.48';
+const VERSION = '1.0.49';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -375,6 +375,68 @@ function syncDashboardToLog() {
 const ISSUE_LOG_NUM_COLS = 7;
 
 /**
+ * Looks up email subject line from triggers worksheet by trigger number.
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss
+ * @param {string} subject - "Math" or "Reading"
+ * @param {number|string} triggerNum
+ * @returns {string}
+ */
+function getEmailFromTriggersSheet(ss, subject, triggerNum) {
+  if (triggerNum == null || triggerNum === '') return '';
+  const triggerStr = String(triggerNum).trim();
+  if (!triggerStr) return '';
+  
+  // Try to find triggers sheet (could be "Triggers", "Math Triggers", "Reading Triggers", etc.)
+  const sheets = ss.getSheets();
+  let triggersSheet = null;
+  const subjectLower = subject.toLowerCase();
+  
+  for (let i = 0; i < sheets.length; i++) {
+    const name = sheets[i].getName().toLowerCase();
+    if (name.indexOf('trigger') !== -1 && (name.indexOf(subjectLower) !== -1 || name.indexOf('trigger') === 0)) {
+      triggersSheet = sheets[i];
+      break;
+    }
+  }
+  
+  if (!triggersSheet || triggersSheet.getLastRow() < 2) return '';
+  
+  // Read triggers sheet - assume column A has trigger numbers, column B (or another column) has email subject lines
+  const headerRow = triggersSheet.getRange(1, 1, 1, triggersSheet.getLastColumn()).getValues()[0];
+  let triggerCol = 0;
+  let emailCol = 1; // Default to column B
+  
+  // Find trigger number column (usually column A or column with "Trigger" in header)
+  for (let c = 0; c < headerRow.length; c++) {
+    const h = String(headerRow[c] || '').trim().toLowerCase();
+    if (h.indexOf('trigger') !== -1 || h === '#' || h === 'number') {
+      triggerCol = c;
+      break;
+    }
+  }
+  
+  // Find email/subject column (usually column B or column with "Email", "Subject", "Message" in header)
+  for (let c = 0; c < headerRow.length; c++) {
+    const h = String(headerRow[c] || '').trim().toLowerCase();
+    if (h.indexOf('email') !== -1 || h.indexOf('subject') !== -1 || h.indexOf('message') !== -1) {
+      emailCol = c;
+      break;
+    }
+  }
+  
+  const data = triggersSheet.getRange(2, 1, triggersSheet.getLastRow() - 1, triggersSheet.getLastColumn()).getValues();
+  for (let r = 0; r < data.length; r++) {
+    const row = data[r];
+    const rowTrigger = String(row[triggerCol] != null ? row[triggerCol] : '').trim();
+    if (rowTrigger === triggerStr) {
+      return row[emailCol] != null ? String(row[emailCol]) : '';
+    }
+  }
+  
+  return '';
+}
+
+/**
  * Looks up Email for a student by LoginID from Math Data or Reading Data sheet.
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss
  * @param {string} subject - "Math" or "Reading"
@@ -609,7 +671,15 @@ function verifyAndFillEmails() {
           }
         }
         
-        // Method 3: Try opposite Data sheet
+        // Method 3: Try triggers worksheet (lookup email subject line by trigger number)
+        if (!newEmail || newEmail.trim() === '') {
+          newEmail = getEmailFromTriggersSheet(ss, subject, triggerNum);
+          if (newEmail && newEmail.trim() !== '') {
+            debugLog('Verify', 'found email in triggers sheet', { sheet: name, loginId: loginId, triggerNum: triggerNum, row: r + WORK_AREA_START_ROW });
+          }
+        }
+        
+        // Method 4: Try opposite Data sheet
         if ((!newEmail || newEmail.trim() === '') && subject === 'Reading') {
           newEmail = getEmailFromDataSheet(ss, 'Math', loginId);
           if (newEmail && newEmail.trim() !== '') {
@@ -774,9 +844,12 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
     if (loggedTodayIds[id]) continue;
     if (excludeFromLoad && excludeFromLoad[id]) continue;
     addedKeys[key(id, tr)] = true;
-    // If email still empty, try Data sheet as fallback
+    // If email still empty, try triggers sheet first, then Data sheet as fallback
     if (!email || email.trim() === '') {
-      email = getEmailFromDataSheet(ss, subject, id);
+      email = getEmailFromTriggersSheet(ss, subject, tr);
+      if (!email || email.trim() === '') {
+        email = getEmailFromDataSheet(ss, subject, id);
+      }
     }
     merged.push([ent.loginId, ent.name, email, ent.triggerNum, 'Issue', ent.note]);
     broughtBackKeys.push({ subject: subject, loginId: id, triggerNum: tr, sheetRow: ent.sheetRow });
@@ -837,6 +910,10 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
                   if (newEmail && newEmail.trim() !== '') break;
                 }
               }
+              // Try triggers worksheet (lookup email subject line by trigger number)
+              if (!newEmail || newEmail.trim() === '') {
+                newEmail = getEmailFromTriggersSheet(ss, subject, triggerNum);
+              }
               // Try subject Data sheet
               if (!newEmail || newEmail.trim() === '') {
                 newEmail = getEmailFromDataSheet(ss, subject, loginId);
@@ -872,6 +949,10 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
                   newEmail = dataRow[freshEmailCol] != null ? String(dataRow[freshEmailCol]) : '';
                   if (newEmail && newEmail.trim() !== '') break;
                 }
+              }
+              // Try triggers worksheet (lookup email subject line by trigger number)
+              if (!newEmail || newEmail.trim() === '') {
+                newEmail = getEmailFromTriggersSheet(ss, subject, triggerNum);
               }
               // Try subject Data sheet
               if (!newEmail || newEmail.trim() === '') {
