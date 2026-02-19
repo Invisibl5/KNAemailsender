@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.42';
+const VERSION = '1.0.43';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -603,18 +603,28 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
     const id = String(ent.loginId).trim();
     const tr = ent.triggerNum;
     if (addedKeys[key(id, tr)]) continue;
-    addedKeys[key(id, tr)] = true;
-    // Try to get email from dashboard sheet first (if student exists there), then fall back to Data sheet
+    // Only bring back Issue entries if they match the SEND EMAIL filter (exist in dashboard with "send email" status)
+    let foundInDashboard = false;
     let email = '';
     for (let r = 0; r < data.length; r++) {
       const row = data[r];
       const rowId = String(row[0] != null ? row[0] : '').trim();
       if (rowId === id) {
-        email = row[emailCol] != null ? String(row[emailCol]) : '';
-        break;
+        // Check if this row has "send email" status (same filter as regular rows)
+        if (String((row[4] || '')).trim().toLowerCase() === 'send email') {
+          foundInDashboard = true;
+          email = row[emailCol] != null ? String(row[emailCol]) : '';
+          break;
+        }
       }
     }
-    // If not found in dashboard, try Data sheet
+    // Only add if found in dashboard with "send email" status
+    if (!foundInDashboard) continue;
+    // Also check exclusion filters (logged today, Issue - Archive)
+    if (loggedTodayIds[id]) continue;
+    if (excludeFromLoad && excludeFromLoad[id]) continue;
+    addedKeys[key(id, tr)] = true;
+    // If email still empty, try Data sheet as fallback
     if (!email || email.trim() === '') {
       email = getEmailFromDataSheet(ss, subject, id);
     }
