@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.43';
+const VERSION = '1.0.44';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -642,6 +642,44 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
     sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, endRow, WORK_AREA_COLS).clearContent();
     sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, merged.length, WORK_AREA_COLS).setValues(merged);
     debugLog('Load', 'write done', { sheet: sheetName, rows: merged.length, cols: WORK_AREA_COLS });
+    
+    // Wait 2 seconds, then verify and fill any missing emails
+    Utilities.sleep(2000);
+    SpreadsheetApp.flush();
+    const verifyRange = sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, merged.length, WORK_AREA_COLS);
+    const verifyData = verifyRange.getValues();
+    let updated = false;
+    for (let r = 0; r < verifyData.length; r++) {
+      const row = verifyData[r];
+      const loginId = String(row[0] || '').trim();
+      const email = String(row[2] || '').trim(); // Email is at index 2 (column K)
+      if (loginId && (!email || email === '')) {
+        // Try to get email from dashboard data first
+        let newEmail = '';
+        for (let d = 0; d < data.length; d++) {
+          const dataRow = data[d];
+          const dataId = String(dataRow[0] != null ? dataRow[0] : '').trim();
+          if (dataId === loginId) {
+            newEmail = dataRow[emailCol] != null ? String(dataRow[emailCol]) : '';
+            break;
+          }
+        }
+        // If still empty, try Data sheet
+        if (!newEmail || newEmail.trim() === '') {
+          newEmail = getEmailFromDataSheet(ss, subject, loginId);
+        }
+        if (newEmail && newEmail.trim() !== '') {
+          verifyData[r][2] = newEmail; // Update email at index 2
+          updated = true;
+          debugLog('Load', 'filled missing email', { sheet: sheetName, row: r + WORK_AREA_START_ROW, loginId: loginId });
+        }
+      }
+    }
+    if (updated) {
+      verifyRange.setValues(verifyData);
+      SpreadsheetApp.flush();
+      debugLog('Load', 'verification complete - emails filled', { sheet: sheetName });
+    }
   }
   return merged.length;
 }
