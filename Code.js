@@ -523,6 +523,154 @@ function loadToWorkArea() {
   }
 }
 
+/**
+ * Standalone verification: checks ALL rows in work area and fills any missing emails.
+ * Can be run independently from menu: KNA Email Sender → Verify & Fill Emails
+ */
+function verifyAndFillEmails() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getActiveSheet();
+    const name = sheet.getName();
+    
+    const isMath = name.toLowerCase().indexOf('math') !== -1;
+    const isReading = name.toLowerCase().indexOf('reading') !== -1;
+    const isDashboard = name.toLowerCase().indexOf('dashboard') !== -1;
+    
+    if (!isDashboard || (!isMath && !isReading)) {
+      SpreadsheetApp.getUi().alert(
+        'Wrong sheet',
+        'Please run this from "Math Dashboard" or "Reading Dashboard".',
+        SpreadsheetApp.getUi().ButtonSet.OK
+      );
+      return;
+    }
+    
+    const subject = isMath ? 'Math' : 'Reading';
+    const lastRow = sheet.getLastRow();
+    
+    if (lastRow < WORK_AREA_START_ROW) {
+      SpreadsheetApp.getUi().alert('No data', 'No rows found in work area.', SpreadsheetApp.getUi().ButtonSet.OK);
+      return;
+    }
+    
+    // Read ALL dashboard data (rows 3+) to get email column info
+    const dashboardDataRange = sheet.getRange(3, 1, Math.max(lastRow - 2, 0), Math.max(sheet.getLastColumn(), 7));
+    const dashboardData = dashboardDataRange.getValues();
+    const headerRow = sheet.getRange(2, 1, 1, Math.max(sheet.getLastColumn(), 7)).getValues()[0];
+    const col = getColumnIndices(headerRow);
+    const emailCol = (col.email && col.email >= 1 && col.email <= dashboardDataRange.getNumColumns()) ? col.email - 1 : 5;
+    
+    // Read work area (I:N)
+    const workAreaRows = lastRow >= WORK_AREA_START_ROW ? lastRow - WORK_AREA_START_ROW + 1 : 0;
+    if (workAreaRows === 0) {
+      SpreadsheetApp.getUi().alert('No work area', 'No rows found in work area (columns I-N).', SpreadsheetApp.getUi().ButtonSet.OK);
+      return;
+    }
+    
+    const workAreaRange = sheet.getRange(WORK_AREA_START_ROW, WORK_AREA_START_COL, workAreaRows, WORK_AREA_COLS);
+    const workAreaData = workAreaRange.getValues();
+    let updated = false;
+    let filledCount = 0;
+    let missingCount = 0;
+    
+    for (let r = 0; r < workAreaData.length; r++) {
+      const row = workAreaData[r];
+      const loginId = String(row[0] || '').trim();
+      const name = String(row[1] || '').trim();
+      const email = String(row[2] || '').trim(); // Column K (index 2)
+      const triggerNum = row[3];
+      const status = String(row[4] || '').trim();
+      const notes = String(row[5] || '').trim();
+      
+      // Check if row has LoginID and Trigger# but missing email
+      if (loginId && triggerNum != null && triggerNum !== '' && (!email || email === '')) {
+        missingCount++;
+        let newEmail = '';
+        
+        // Method 1: Check dashboard data (rows 3+) for this LoginID
+        for (let d = 0; d < dashboardData.length; d++) {
+          const dataRow = dashboardData[d];
+          const dataId = String(dataRow[0] != null ? dataRow[0] : '').trim();
+          if (dataId === loginId) {
+            newEmail = dataRow[emailCol] != null ? String(dataRow[emailCol]) : '';
+            if (newEmail && newEmail.trim() !== '') {
+              debugLog('Verify', 'found email in dashboard', { sheet: name, loginId: loginId, row: r + WORK_AREA_START_ROW });
+              break;
+            }
+          }
+        }
+        
+        // Method 2: Try subject Data sheet
+        if (!newEmail || newEmail.trim() === '') {
+          newEmail = getEmailFromDataSheet(ss, subject, loginId);
+          if (newEmail && newEmail.trim() !== '') {
+            debugLog('Verify', 'found email in ' + subject + ' Data', { sheet: name, loginId: loginId, row: r + WORK_AREA_START_ROW });
+          }
+        }
+        
+        // Method 3: Try opposite Data sheet
+        if ((!newEmail || newEmail.trim() === '') && subject === 'Reading') {
+          newEmail = getEmailFromDataSheet(ss, 'Math', loginId);
+          if (newEmail && newEmail.trim() !== '') {
+            debugLog('Verify', 'found email in Math Data', { sheet: name, loginId: loginId, row: r + WORK_AREA_START_ROW });
+          }
+        }
+        if ((!newEmail || newEmail.trim() === '') && subject === 'Math') {
+          newEmail = getEmailFromDataSheet(ss, 'Reading', loginId);
+          if (newEmail && newEmail.trim() !== '') {
+            debugLog('Verify', 'found email in Reading Data', { sheet: name, loginId: loginId, row: r + WORK_AREA_START_ROW });
+          }
+        }
+        
+        if (newEmail && newEmail.trim() !== '') {
+          workAreaData[r][2] = newEmail;
+          updated = true;
+          filledCount++;
+          debugLog('Verify', 'FILLED email', { sheet: name, loginId: loginId, triggerNum: triggerNum, email: newEmail, row: r + WORK_AREA_START_ROW });
+        } else {
+          debugLog('Verify', 'COULD NOT FIND email', { sheet: name, loginId: loginId, triggerNum: triggerNum, row: r + WORK_AREA_START_ROW });
+        }
+      }
+    }
+    
+    if (updated) {
+      workAreaRange.setValues(workAreaData);
+      SpreadsheetApp.flush();
+      SpreadsheetApp.getUi().alert(
+        'Verification complete',
+        'Checked ' + workAreaRows + ' rows.\n' +
+        'Found ' + missingCount + ' rows missing emails.\n' +
+        'Filled ' + filledCount + ' emails.\n' +
+        (missingCount - filledCount > 0 ? '\n' + (missingCount - filledCount) + ' emails could not be found in any data source.' : ''),
+        SpreadsheetApp.getUi().ButtonSet.OK
+      );
+    } else {
+      if (missingCount > 0) {
+        SpreadsheetApp.getUi().alert(
+          'No emails found',
+          'Checked ' + workAreaRows + ' rows.\n' +
+          'Found ' + missingCount + ' rows missing emails.\n' +
+          'Could not find emails in dashboard or Data sheets.\n\n' +
+          'Check View > Logs (Execution log) for details.',
+          SpreadsheetApp.getUi().ButtonSet.OK
+        );
+      } else {
+        SpreadsheetApp.getUi().alert(
+          'All good',
+          'Checked ' + workAreaRows + ' rows.\n' +
+          'All rows with LoginID and Trigger# have emails.',
+          SpreadsheetApp.getUi().ButtonSet.OK
+        );
+      }
+    }
+  } catch (e) {
+    debugLog('Verify', 'ERROR', { message: e.message, stack: e.stack });
+    SpreadsheetApp.getUi().alert('Verification error', e.message + '\n\nCheck View > Logs (Execution log) for details.', SpreadsheetApp.getUi().ButtonSet.OK);
+    throw e;
+  }
+}
+
 /** Normalize trigger for comparison (string or number). */
 function normalizeTrigger(t) {
   if (t == null) return '';
