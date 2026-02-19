@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.47';
+const VERSION = '1.0.48';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -23,6 +23,8 @@ function onOpen() {
     .addSeparator()
     .addItem('Load', 'loadToWorkArea')
     .addItem('Move', 'syncDashboardToLog')
+    .addSeparator()
+    .addItem('Verify & Fill Emails', 'verifyAndFillEmails')
     .addSeparator()
     .addItem('Verify from ClassNavi', 'verifyFromClassNavi')
     .addToUi();
