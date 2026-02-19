@@ -6,7 +6,7 @@
  */
 
 // --- Version (bump when you deploy changes) ---
-const VERSION = '1.0.41';
+const VERSION = '1.0.42';
 
 // --- Import folder config ---
 const IMPORT_FOLDER_NAME = 'KNA Email Sender Import';
@@ -604,7 +604,20 @@ function loadOneDashboard(sheet, loggedTodayIds, excludeFromLoad, issueNoteByLog
     const tr = ent.triggerNum;
     if (addedKeys[key(id, tr)]) continue;
     addedKeys[key(id, tr)] = true;
-    const email = getEmailFromDataSheet(ss, subject, id);
+    // Try to get email from dashboard sheet first (if student exists there), then fall back to Data sheet
+    let email = '';
+    for (let r = 0; r < data.length; r++) {
+      const row = data[r];
+      const rowId = String(row[0] != null ? row[0] : '').trim();
+      if (rowId === id) {
+        email = row[emailCol] != null ? String(row[emailCol]) : '';
+        break;
+      }
+    }
+    // If not found in dashboard, try Data sheet
+    if (!email || email.trim() === '') {
+      email = getEmailFromDataSheet(ss, subject, id);
+    }
     merged.push([ent.loginId, ent.name, email, ent.triggerNum, 'Issue', ent.note]);
     broughtBackKeys.push({ subject: subject, loginId: id, triggerNum: tr, sheetRow: ent.sheetRow });
   }
